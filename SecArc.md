@@ -1,9 +1,9 @@
 # Secure AI Coding Guidelines
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Effective Date:** February 2026  
 **Classification:** INTERNAL  
-**Last Updated:** 2026-02-13
+**Last Updated:** 2026-02-15
 
 ---
 
@@ -19,6 +19,8 @@
 8. [Security Tooling & Automation](#8-security-tooling--automation)
 9. [Security Audit Trail](#9-security-audit-trail)
 10. [Quick Reference Card](#10-quick-reference-card)
+11. [Security-First Architecture Blueprint](#11-security-first-architecture-blueprint)
+12. [Document Relationships](#12-document-relationships)
 
 ---
 
@@ -1357,11 +1359,64 @@ if (!result.success) {
 
 ---
 
+
+## 11. Security-First Architecture Blueprint
+
+This section defines the target architecture model for deploying secure agentic AI systems. It complements coding-level controls by assigning runtime control points.
+
+### 11.1 Trust Boundaries and Security Zones
+
+| Zone | Components | Trust Level | Primary Controls |
+|------|------------|-------------|------------------|
+| Edge Zone | API gateway, APIRule ingress | Untrusted boundary | JWT/OAuth validation, WAF, rate limits |
+| Control Zone | MCP gateway, policy engine | High trust | mTLS, policy-as-code, scanner enforcement |
+| Execution Zone | Tool runtimes, workers, jobs | Restricted trust | Sidecar authorization, least privilege, egress policy |
+| Data Zone | Databases, object stores, secret managers | Highly restricted | workload identity, encryption, audit trails |
+
+### 11.2 Gatekeeper Pattern for MCP
+
+For MCP-enabled agent systems, adopt a four-plane pattern:
+
+1. **Identity Plane:** SPIFFE/SPIRE (or equivalent workload identity) for cryptographic service identity.
+2. **Enforcement Plane:** sidecar proxy (Envoy/Istio) to enforce mTLS and transport security.
+3. **Decision Plane:** OPA/Rego policies for principal-action-resource authorization.
+4. **Ingress Plane:** MCP gateway for request mediation, schema pinning, and scanner decisions.
+
+### 11.3 Control Ownership Matrix
+
+| Control | Owner | Enforcement Point | Evidence |
+|---------|-------|-------------------|----------|
+| Workload identity issuance | Platform | Identity plane | SPIRE/IAM issuance logs |
+| mTLS strict mode | Platform | Service mesh / sidecar | PeerAuthentication, mesh telemetry |
+| Tool authorization | Security + Platform | OPA decision plane | OPA decision logs |
+| MCP request scanning | Security | MCP gateway scanner | scanner decision events |
+| Schema attestation | Platform + App Team | CI/CD + gateway | signed schema manifest + verify logs |
+
+### 11.4 Architecture-Level Security SLOs
+
+- 100% east-west service traffic encrypted with mTLS.
+- 100% side-effecting requests evaluated by policy engine.
+- 0 unsigned schema versions accepted in production.
+- Mean time to revoke compromised workload identity < 5 minutes.
+
+## 12. Document Relationships
+
+Use this repository as a layered security documentation stack:
+
+- **`Guidelines.md`**: secure coding and AI-agent implementation guardrails.
+- **`SecArc.md`**: security-first architecture model, trust boundaries, control ownership.
+- **`KuberneteSEC.md`**: Kubernetes/SAP Kyma deployment controls and operational hardening.
+
+When requirements conflict, architecture and platform constraints in `SecArc.md` and `KuberneteSEC.md` take precedence over implementation convenience.
+
+---
+
 ## Document Control
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-02-13 | Security Team | Initial release - comprehensive AI security guidelines |
+| 1.1 | 2026-02-15 | Security Team | Added security-first architecture blueprint and document relationship model |
 
 ---
 

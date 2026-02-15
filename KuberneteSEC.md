@@ -2,8 +2,8 @@
 
 ## SECOMP-V2 Kyma Deployment Security Assessment
 
-**Document Version:** 1.0.0  
-**Assessment Date:** February 13, 2026  
+**Document Version:** 1.1.0  
+**Assessment Date:** February 15, 2026  
 **Assessment Type:** OWASP Kubernetes & Container Security Audit  
 **Target Environment:** SAP BTP Kyma Runtime
 
@@ -25,6 +25,7 @@
 12. [CronJob-Based Credential Rotation](#12-cronjob-based-credential-rotation)
 13. [OWASP References and Compliance Matrix](#13-owasp-references-and-compliance-matrix)
 14. [Security Review Lessons Learned](#14-security-review-lessons-learned)
+15. [MCP Gatekeeper Deployment on Kyma](#15-mcp-gatekeeper-deployment-on-kyma)
 
 ---
 
@@ -851,7 +852,7 @@ Use this checklist before deploying to any environment.
 - [ ] ResourceQuota applied to namespace
 - [ ] LimitRange sets defaults
 
-**Cross-Reference:** See `SECURE_AI_CODING_GUIDELINES.md` Section 11.5 for detailed resource management patterns.
+**Cross-Reference:** See `Guidelines.md` Section 11.5 for detailed resource management patterns.
 
 ### Observability & Reliability
 
@@ -1027,7 +1028,7 @@ spec:
 
 ## 12. CronJob-Based Credential Rotation
 
-> **Cross-Reference:** For comprehensive CronJob security patterns, see `SECURE_AI_CODING_GUIDELINES.md` Section 11.9.
+> **Cross-Reference:** For comprehensive CronJob security patterns, see `Guidelines.md` Section 11.9.
 
 ### 12.1 Gap Analysis: Why CronJob Wasn't in Original Review
 
@@ -1173,7 +1174,7 @@ spec:
           port: 6443
 ```
 
-**Cross-Reference:** See `SECURE_AI_CODING_GUIDELINES.md` Section 11.9.4 for detailed CronJob NetworkPolicy patterns.
+**Cross-Reference:** See `Guidelines.md` Section 11.9.4 for detailed CronJob NetworkPolicy patterns.
 
 **`base/kustomization.yaml`** - Include new resources:
 ```yaml
@@ -1297,11 +1298,82 @@ spec:
 
 ---
 
+
+## 15. MCP Gatekeeper Deployment on Kyma
+
+This section translates MCP zero-trust strategy into SAP BTP Kyma runtime controls.
+
+### 15.1 Reference Topology
+
+```
+Agent -> Kyma APIRule -> MCP Gateway -> OPA (ext_authz) -> Tool Service (Envoy sidecar) -> Data Services
+                           \-> MCP Scanner (request/response + drift checks)
+```
+
+### 15.2 Mandatory Kyma Controls for MCP
+
+- All MCP traffic enters through a dedicated APIRule host for gateway mediation.
+- Mesh traffic between gateway and tool namespaces must run in STRICT mTLS mode.
+- AuthorizationPolicy must deny by default and explicitly allow principal/action/resource tuples.
+- Tool namespaces must have default-deny ingress/egress NetworkPolicy.
+- Gateway must reject unsigned or unknown tool schemas in production.
+
+### 15.3 Example AuthorizationPolicy (Gateway -> Tool)
+
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-mcp-gateway-to-finance-tool
+  namespace: tools
+spec:
+  selector:
+    matchLabels:
+      app: finance-tool
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/mcp/sa/mcp-gateway
+      to:
+        - operation:
+            methods: ["POST"]
+            paths: ["/invoke"]
+```
+
+### 15.4 Scanner Enforcement Lifecycle
+
+| Mode | Environment | Behavior |
+|------|-------------|----------|
+| observe | dev | log scanner matches only |
+| enforce-nonprod | test/stage | block high-severity findings |
+| enforce-prod | prod | fail-closed on policy/schema/scanner violations |
+
+Required scanner event fields: `timestamp`, `requestId`, `principal`, `tool`, `policyVersion`, `schemaHash`, `decision`, `reason`.
+
+### 15.5 Schema Pinning in Deployment Pipelines
+
+1. Generate tool schema and deterministic hash in CI.
+2. Sign schema artifact with organization signing workflow.
+3. Publish attestation to deployment artifact store.
+4. Gateway validates attestation before routing.
+5. Rollout blocked if schema verification fails.
+
+### 15.6 Operational Runbook Hooks
+
+- Add alert for denied scanner decisions exceeding baseline.
+- Add alert for mTLS peer auth downgrade attempts.
+- Keep emergency kill switch to disable side-effecting MCP tools.
+- Validate identity revocation playbook quarterly.
+
+---
+
 ## Document History
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0.0 | 2026-02-13 | Security Team | Initial OWASP audit findings |
+| 1.1.0 | 2026-02-15 | Security Team | Added MCP Gatekeeper deployment strategy for SAP BTP Kyma and fixed guideline references |
 
 ---
 

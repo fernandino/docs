@@ -1,9 +1,9 @@
 # Secure AI Coding Guidelines
 
-**Version:** 1.2  
+**Version:** 1.4  
 **Effective Date:** February 2026  
 **Classification:** INTERNAL  
-**Last Updated:** 2026-02-13
+**Last Updated:** 2026-02-15
 
 ---
 
@@ -30,7 +30,8 @@
 | [12. API Security](#12-api-security-owasp-api-top-10) | OWASP API Top 10 | Auth, Rate Limiting |
 | [13. SAP BTP Security](#13-sap-btp-security-patterns) | SAP Platform | XSUAA, Destinations |
 | [14. Supply Chain](#14-supply-chain-security) | SBOM, Signing | SLSA, Sigstore |
-| [15. A2A/MCP Protocol](#15-a2amcp-protocol-security) | Agent Protocols | Task Auth, Skills |
+| [15. A2A/MCP Protocol](#15-a2amcp-protocol-security) | Agent Protocols | Task Auth, Gateway, Scanner |
+| [16. Agent Operational Security](#16-agent-operational-security-best-practices) | Runtime Guardrails | HITL, Evals, Kill Switch |
 
 ---
 
@@ -81,6 +82,19 @@
     - [15.3 Task Authentication](#153-task-authentication)
     - [15.4 MCP Tool Security](#154-mcp-tool-security)
     - [15.5 Skill Permission Model](#155-skill-permission-model)
+    - [15.6 MCP Zero-Trust Gatekeeper Architecture](#156-mcp-zero-trust-gatekeeper-architecture)
+    - [15.7 Control Plane Contract (Gateway, Sidecar, OPA)](#157-control-plane-contract-gateway-sidecar-opa)
+    - [15.8 MCP Gateway Scanner Strategy](#158-mcp-gateway-scanner-strategy)
+    - [15.9 Schema Pinning & Attestation](#159-schema-pinning--attestation)
+    - [15.10 Packet Flow with Deny Paths](#1510-packet-flow-with-deny-paths)
+    - [15.11 Phased Adoption Roadmap](#1511-phased-adoption-roadmap)
+16. [Agent Operational Security Best Practices](#16-agent-operational-security-best-practices)
+    - [16.1 Prompt & Context Trust Boundaries](#161-prompt--context-trust-boundaries)
+    - [16.2 Tool Execution Policy-as-Code](#162-tool-execution-policy-as-code-default-deny)
+    - [16.3 Human-in-the-Loop Escalation Matrix](#163-human-in-the-loop-hitl-escalation-matrix)
+    - [16.4 RAG & Memory Poisoning Defenses](#164-rag--memory-poisoning-defenses)
+    - [16.5 Agent Security Evaluations in CI](#165-agent-security-evaluations-in-cicd)
+    - [16.6 Runtime Safety Operations (Observability + Kill Switch)](#166-runtime-safety-operations-observability--kill-switch)
 
 ---
 
@@ -3657,6 +3671,8 @@ NAMESPACE SECURITY:
 | 1.0 | 2026-02-13 | Security Team | Initial release - comprehensive AI security guidelines |
 | 1.1 | 2026-02-13 | Security Team | Added Section 11: Kubernetes & Container Security |
 | 1.2 | 2026-02-13 | Security Team | Added Sections 12-15: API, SAP BTP, Supply Chain, A2A/MCP Security |
+| 1.3 | 2026-02-15 | Security Team | Added Section 16: Agent Operational Security Best Practices |
+| 1.4 | 2026-02-15 | Security Team | Expanded Section 15 with MCP Gatekeeper strategy, gateway scanner, schema pinning, and rollout guidance |
 
 ---
 
@@ -4208,6 +4224,362 @@ const SKILL_CAPABILITIES = {
   },
 };
 ```
+
+
+### 15.6 MCP Zero-Trust Gatekeeper Architecture
+
+**Title:** Implementing Zero Trust Security for Agentic AI (The "Gatekeeper" Pattern)  
+**Date:** February 2026  
+**Audience:** Platform Engineers & Security Architects
+
+MCP was originally optimized for high-trust local environments. In cloud and multi-tenant deployments, teams MUST replace implicit trust with explicit cryptographic attestation.
+
+**Primary threat model:**
+- **Identity Spoofing:** Malicious tool impersonates a trusted MCP service.
+- **Rug Pull:** A tool passes initial validation, then changes behavior dynamically.
+- **Confused Deputy:** A privileged agent is manipulated into unauthorized actions.
+
+**Mandatory controls (MUST):**
+1. All MCP workloads (agent, gateway, tool service) use SPIFFE identities issued by SPIRE.
+2. East-west traffic uses mTLS with SVID verification; plaintext fallback is forbidden.
+3. Authorization decisions are policy-driven (OPA) and fail-closed.
+4. Gateway scanner enforces request/response safeguards and drift detection.
+5. Schema pinning and attestation are required for tool invocation in production.
+
+### 15.7 Control Plane Contract (Gateway, Sidecar, OPA)
+
+`MCP_GATEKEEPER_CONTROL_CONTRACT`
+
+| Component | Primary Responsibility | Inputs | Failure Mode | Required Log |
+|-----------|------------------------|--------|--------------|--------------|
+| MCP Gateway | Entry authn/authz, schema pre-check, scanner enforcement | Caller SVID/JWT, tool metadata, schema hash | Fail-closed (`401/403/412`) | `gateway.decision` |
+| Envoy Sidecar | mTLS identity verification and L7 policy enforcement | Peer SVID, destination service identity | TCP drop / `403` | `envoy.access` |
+| OPA Decision Plane | Fine-grained authorization decision | Principal, action, resource, context | Deny by default | `opa.decision` |
+| Tool Runtime | Business logic only after upstream checks pass | Validated request context | Reject invalid context | `tool.audit` |
+
+**Non-bypass rules:**
+- Gateway approval does **not** replace sidecar verification.
+- Tool runtime must never bypass policy enforcement path.
+- OPA policy version must be included in decision logs for every side-effecting action.
+
+### 15.8 MCP Gateway Scanner Strategy
+
+The scanner protects against post-onboarding drift and hostile payloads.
+
+**Scanner pipeline:**
+1. **Pre-request scan** (input and intent): prompt/tool arg validation, risky operation detection.
+2. **Policy decision scan** (OPA decision + context): validate principal/action/resource tuple.
+3. **Post-response scan** (output and side effects): detect data exfiltration signatures and unsafe instructions.
+4. **Behavior drift scan** (time-series): detect sudden changes in tool behavior profile.
+
+**Enforcement modes:**
+- `observe`: log only.
+- `enforce-nonprod`: block in staging, alert in prod shadow mode.
+- `enforce-prod`: block and alert in production.
+
+```json
+{
+  "timestamp": "2026-02-15T12:00:00Z",
+  "requestId": "req_9f2",
+  "principal": "spiffe://acme/agent-research",
+  "tool": "finance-tool",
+  "policyVersion": "opa-v2026.02.15",
+  "schemaHash": "sha256:8c4...",
+  "decision": "deny",
+  "reason": "attempted sensitive path /etc/passwd"
+}
+```
+
+### 15.9 Schema Pinning & Attestation
+
+`SCHEMA_PIN_REQUIRED`
+
+Every tool contract must be versioned, signed, and pinned at the gateway.
+
+**Required process:**
+1. Generate schema artifact and deterministic hash.
+2. Sign the schema with organization keyless signing workflow.
+3. Publish `(tool, version, hash, signature)` to approved registry.
+4. Gateway verifies hash + signature before routing to tool.
+5. Unknown or unsigned schema versions fail-closed in production.
+
+```yaml
+# Example schema attestation record
+tool: finance-tool
+version: 2.3.1
+schemaHash: "sha256:8c4b6f..."
+signatureIssuer: "https://token.actions.githubusercontent.com"
+verified: true
+```
+
+### 15.10 Packet Flow with Deny Paths
+
+```
+Agent -> MCP Gateway -> OPA -> Tool Envoy Sidecar -> Tool Runtime
+                 \-> Scanner checks on request/response
+```
+
+**Life of a secure request:**
+1. Agent sends request to gateway with workload identity.
+2. Gateway validates identity and asks OPA for authorization.
+3. If approved, gateway forwards to tool pod.
+4. Envoy sidecar re-verifies caller identity via mTLS.
+5. Tool runtime executes only validated action.
+6. Gateway scanner validates response and releases to caller.
+
+**Deny path behavior:**
+- Invalid identity: immediate connection termination.
+- OPA deny: return `403` with structured reason code.
+- Schema mismatch: return `412 Precondition Failed`.
+- Scanner high-severity hit: block response, raise incident event.
+
+### 15.11 Phased Adoption Roadmap
+
+| Phase | Goal | Exit Criteria |
+|-------|------|---------------|
+| Phase 1 - Foundation | Centralize MCP ingress through gateway | 100% MCP traffic enters via gateway; baseline decision logs available |
+| Phase 2 - Identity & AuthZ | Enable SPIRE identities + OPA authorization | 100% east-west MCP traffic on mTLS; default-deny policies enforced |
+| Phase 3 - Continuous Attestation | Activate scanner + schema pinning in enforce-prod | 0 unsigned schema invocations in prod; automated revoke/kill-switch tested |
+
+**Operational SLOs:**
+- 99.9% policy decision availability.
+- 100% side-effecting actions have `requestId` + `policyVersion` in logs.
+- Mean time to revoke compromised identity < 5 minutes.
+
+
+
+## 16. Agent Operational Security Best Practices
+
+### 16.1 Prompt & Context Trust Boundaries
+
+All agent inputs MUST be classified by trust level before planning, reasoning, or tool invocation.
+
+| Context Source | Default Trust | Risks | Mandatory Control |
+|----------------|---------------|-------|-------------------|
+| System prompt / policy | High (internal) | Misconfiguration, stale policy | Versioned policy, signed changes, change review |
+| User message | Untrusted | Prompt injection, data exfiltration attempts | Input sanitization, intent classification, policy filter |
+| RAG documents | Untrusted-by-default | Retrieval poisoning, hidden instructions | Source allowlist, provenance checks, instruction stripping |
+| Tool outputs | Untrusted | Output injection, malformed data, hostile payloads | Schema validation before use, output sandboxing |
+| Agent memory | Conditional | Memory poisoning, stale unsafe instructions | TTL, integrity checks, scoped write permissions |
+
+**Non-negotiable rules:**
+
+1. Untrusted context MUST NOT directly trigger side-effecting tools.
+2. Tool outputs MUST be validated (schema + bounds) before reuse in prompts.
+3. Any instruction conflict resolves to system policy, never user content.
+4. Context windows should include only minimum required data (least context principle).
+
+```typescript
+// SAFE: Trust-boundary enforcement before tool invocation
+import { z } from 'zod';
+
+type TrustLevel = 'high' | 'medium' | 'untrusted';
+
+const ToolResultSchema = z.object({
+  action: z.enum(['search', 'summarize', 'none']),
+  confidence: z.number().min(0).max(1),
+  payload: z.string().max(20000),
+});
+
+function canExecuteSideEffect(trust: TrustLevel, requiresWrite: boolean): boolean {
+  if (!requiresWrite) return true;
+  return trust !== 'untrusted';
+}
+
+async function guardedToolExecution(input: unknown, trust: TrustLevel) {
+  const parsed = ToolResultSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new Error('Invalid tool output at trust boundary');
+  }
+
+  const requiresWrite = parsed.data.action !== 'search';
+  if (!canExecuteSideEffect(trust, requiresWrite)) {
+    throw new Error('Blocked by trust-boundary policy');
+  }
+
+  return parsed.data;
+}
+```
+
+### 16.2 Tool Execution Policy-as-Code (Default Deny)
+
+Every tool/skill MUST be governed by explicit machine-enforced policy with **default deny** semantics.
+
+```yaml
+# policy/agent-tools.yaml
+version: 1
+mode: default-deny
+
+tools:
+  web-search:
+    allow: true
+    maxInputBytes: 4096
+    timeoutMs: 5000
+    sideEffects: none
+    network:
+      allowedHosts: ["api.search.example.com"]
+      blockedCidrs: ["169.254.169.254/32", "127.0.0.0/8", "10.0.0.0/8"]
+
+  update-ticket:
+    allow: true
+    maxInputBytes: 2048
+    timeoutMs: 3000
+    sideEffects: write
+    requiresHumanApproval: true
+    scopes: ["tickets:write"]
+
+  shell-exec:
+    allow: false
+```
+
+```typescript
+// SAFE: Enforce policy centrally
+function enforceToolPolicy(toolName: string, inputBytes: number, destinationHost?: string) {
+  const policy = POLICY.tools[toolName];
+  if (!policy || !policy.allow) throw new Error(`Tool ${toolName} denied by policy`);
+  if (inputBytes > policy.maxInputBytes) throw new Error('Tool input too large');
+  if (destinationHost && !policy.network?.allowedHosts?.includes(destinationHost)) {
+    throw new Error('Destination host not allowed');
+  }
+}
+```
+
+**Required controls:**
+- Maximum input size and execution time per tool.
+- Egress allowlist and metadata-service/IP blocklist.
+- Side-effect classification (`none`, `read`, `write`, `destructive`).
+- Mandatory explicit approval for `write`/`destructive` tools.
+
+### 16.3 Human-in-the-Loop (HITL) Escalation Matrix
+
+Agents must request human approval before any high-risk action.
+
+| Action Type | Example | HITL Requirement | Evidence Required |
+|-------------|---------|------------------|-------------------|
+| Read-only internal lookup | Query non-sensitive docs | Optional | Request summary |
+| External outbound call | Third-party API invocation | Required if new domain | Domain, purpose, data class |
+| Write operation | Update ticket, modify records | Required | Planned change + rollback |
+| Destructive operation | Delete resource, revoke access | Mandatory (2-person approval) | Diff, blast radius, rollback tested |
+| Production config/security change | IAM, firewall, secrets rotation | Mandatory (security approver) | Threat assessment + change window |
+
+```typescript
+// SAFE: HITL gate for side effects
+async function requireApproval(action: { type: 'read'|'write'|'destructive'; summary: string }) {
+  if (action.type === 'read') return { approved: true, reviewer: 'policy-auto' };
+  return requestHumanApproval({
+    summary: action.summary,
+    requiredRole: action.type === 'destructive' ? 'security+ops' : 'ops',
+  });
+}
+```
+
+### 16.4 RAG & Memory Poisoning Defenses
+
+Retrieved and remembered content is attacker-influenceable and MUST be treated as hostile until validated.
+
+**RAG controls:**
+- Restrict retrieval to approved repositories and signed indexes.
+- Store provenance (`source`, `timestamp`, `hash`) with each chunk.
+- Strip embedded instructions from retrieved content before prompt assembly.
+- Never execute commands/code suggested by retrieved text without separate policy checks.
+
+**Memory controls:**
+- Memory writes allowed only for whitelisted fields.
+- Apply TTL and periodic re-validation for long-lived memory.
+- Prevent cross-tenant memory access by strict tenant scoping.
+- Redact PII/secrets before persistence.
+
+```typescript
+// SAFE: Memory write guard
+const MemoryWriteSchema = z.object({
+  tenantId: z.string().uuid(),
+  key: z.enum(['user_preference', 'project_context', 'safe_summary']),
+  value: z.string().max(4000),
+  ttlSeconds: z.number().int().min(60).max(60 * 60 * 24 * 30),
+});
+```
+
+### 16.5 Agent Security Evaluations in CI/CD
+
+In addition to SAST, each release MUST run adversarial agent evaluations.
+
+```yaml
+# .github/workflows/agent-security-evals.yml
+name: Agent Security Evals
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  prompt-injection-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run injection tests
+        run: npm run test:security:prompt-injection
+
+  tool-abuse-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tool abuse tests
+        run: npm run test:security:tool-abuse
+
+  gate:
+    needs: [prompt-injection-suite, tool-abuse-suite]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce threshold
+        run: |
+          # Fail build if any critical scenario passes unexpectedly
+          test -f reports/agent-security-summary.json
+          jq -e '.criticalFailures == 0 and .highFailures == 0' reports/agent-security-summary.json
+```
+
+**Minimum release criteria:**
+- 0 critical failures on prompt injection corpus.
+- 0 unauthorized tool executions under adversarial prompts.
+- 0 cross-tenant data access violations.
+
+### 16.6 Runtime Safety Operations (Observability + Kill Switch)
+
+Production agent systems MUST support runtime containment and fast shutdown.
+
+**Mandatory telemetry:**
+- Tool call count by tool/tenant/minute.
+- Policy-denied action count.
+- New outbound destination domains.
+- Approval bypass attempts.
+- Token and cost spikes per session.
+
+**Kill switch requirements:**
+- Global emergency disable for all side-effecting tools.
+- Tenant-level kill switch.
+- Per-tool disable flag.
+- Automatic activation on anomaly thresholds.
+
+```typescript
+// SAFE: Runtime kill switch pattern
+function assertRuntimeSafety(ctx: { tenantId: string; tool: string }) {
+  if (FEATURE_FLAGS.globalSideEffectsDisabled) {
+    throw new Error('Global kill switch active');
+  }
+  if (TENANT_BLOCKLIST.has(ctx.tenantId)) {
+    throw new Error('Tenant execution paused');
+  }
+  if (DISABLED_TOOLS.has(ctx.tool)) {
+    throw new Error(`Tool ${ctx.tool} disabled`);
+  }
+}
+```
+
+**Incident playbook (minimum):**
+1. Activate kill switch.
+2. Revoke/rotate affected credentials.
+3. Preserve logs/artifacts for forensics.
+4. Patch policy and add regression test before re-enable.
 
 ---
 
