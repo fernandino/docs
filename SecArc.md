@@ -1,9 +1,9 @@
 # Secure AI Coding Guidelines
 
-**Version:** 1.1  
+**Version:** 1.2  
 **Effective Date:** February 2026  
 **Classification:** INTERNAL  
-**Last Updated:** 2026-02-15
+**Last Updated:** 2026-02-16
 
 ---
 
@@ -20,7 +20,8 @@
 9. [Security Audit Trail](#9-security-audit-trail)
 10. [Quick Reference Card](#10-quick-reference-card)
 11. [Security-First Architecture Blueprint](#11-security-first-architecture-blueprint)
-12. [Document Relationships](#12-document-relationships)
+12. [Architecture Drift Detection (Design vs Code vs Runtime)](#12-architecture-drift-detection-design-vs-code-vs-runtime)
+13. [Document Relationships](#13-document-relationships)
 
 ---
 
@@ -1399,7 +1400,97 @@ For MCP-enabled agent systems, adopt a four-plane pattern:
 - 0 unsigned schema versions accepted in production.
 - Mean time to revoke compromised workload identity < 5 minutes.
 
-## 12. Document Relationships
+## 12. Architecture Drift Detection (Design vs Code vs Runtime)
+
+Security-first architecture is only effective if we continuously verify that implementation still matches design intent. This section defines a mandatory **Semantic Drift Detection** workflow for agent systems.
+
+### 12.1 Objective and Scope
+
+Detect and contain drift between:
+
+1. **Reference Design** (Lucid/Lucidscale architecture)
+2. **Implemented Design** (application code + IaC)
+3. **Runtime Reality** (deployed infrastructure and traffic)
+
+This control is required for all production agent platforms and all MCP/A2A integrations.
+
+### 12.2 Canonical Comparison Model
+
+Because visual diagrams and source code cannot be directly diffed, convert both to a common textual representation.
+
+- **Canonical format:** Mermaid `graph TD`
+- **Reference artifact:** `reference_arch.mmd`
+- **Code-derived artifact:** `actual_impl.mmd`
+- **Runtime-derived artifact (optional but recommended):** `actual_runtime.mmd`
+- **Diff report:** `drift_report.md`
+
+### 12.3 Required Workflow (Fail-Closed for High Drift)
+
+1. **Fetch reference architecture**
+   - Source: Lucid document (MCP server export) or architecture repository artifact.
+   - Output: normalized Mermaid in `reference_arch.mmd`.
+2. **Reverse engineer code and IaC**
+   - Parse service calls, queues/topics, DB clients, network policies, IAM bindings, MCP tool declarations.
+   - Output: strict Mermaid in `actual_impl.mmd` (no inferred edges).
+3. **Collect runtime topology**
+   - Source: cluster/service-mesh/cloud inventory (Lucidscale or platform APIs).
+   - Output: `actual_runtime.mmd`.
+4. **Compute semantic diff**
+   - Missing control edge in implementation = **MISSING**.
+   - Unexpected privileged edge in implementation/runtime = **EXTRA**.
+   - Component mismatch (e.g., Redis vs approved vector DB) = **DRIFT**.
+5. **Gate release**
+   - `MISSING` or privileged `EXTRA` in production paths blocks release until risk acceptance is approved.
+
+### 12.4 Drift Classes and Security Severity
+
+| Drift Type | Example | Severity | Default Action |
+|------------|---------|----------|----------------|
+| Missing Security Control | Design requires policy check before tool write, code bypasses policy | Critical | Block merge/release |
+| Unauthorized Data Path | Runtime shows direct agent -> database path bypassing gateway | Critical | Block + incident review |
+| Identity Drift | mTLS/SPIFFE required in design, runtime shows plaintext link | High | Block release |
+| Component Substitution | Approved service differs from implemented service | Medium/High | Require architecture review |
+| Documentation-only Drift | Label/name mismatch with equivalent controls intact | Low | Track and remediate |
+
+### 12.5 CI/CD and Operational Requirements
+
+- Run drift detection in CI on every pull request that modifies architecture-relevant code/IaC.
+- Run runtime drift detection at least daily for production namespaces.
+- Store all generated artifacts (`*.mmd`, diff JSON/Markdown) as immutable build evidence.
+- Correlate findings with `trace_id` / deployment ID and ticket ID.
+- Enforce policy:
+  - Critical/High unresolved drift => release denied.
+  - Medium drift => time-bound exception with owner and expiration.
+
+### 12.6 Agent-Assisted Drift Detection Prompt Contract
+
+When using an AI agent to perform drift detection, require explicit constraints:
+
+- "Generate only edges proven by source code or runtime metadata."
+- "Mark uncertain edges as `UNVERIFIED`; do not auto-promote to FACT."
+- "Report missing, extra, and mismatched components separately."
+- "Output machine-readable summary (`json`) and human-readable report (`md`)."
+
+### 12.7 Lucid + Mermaid + Runtime Integration Strategy
+
+- **Design source of truth:** Lucid document versioned and approved.
+- **Comparison format:** Mermaid exports for deterministic diff.
+- **Runtime source of truth:** Lucidscale/cloud inventory for live infrastructure.
+- **Three-way comparison:** `reference_arch.mmd` vs `actual_impl.mmd` vs `actual_runtime.mmd`.
+
+This avoids "diagram-only compliance" and detects both code-intent drift and deployment-time drift.
+
+### 12.8 Minimum Evidence Package for Architecture Sign-Off
+
+Every production release must attach:
+
+1. Reference Mermaid hash and version.
+2. Implementation Mermaid hash generated in CI.
+3. Runtime Mermaid hash generated from live environment.
+4. Drift report with status table (`MATCH`, `DRIFT`, `MISSING`, `EXTRA`).
+5. Exception approvals for any non-blocking drift.
+
+## 13. Document Relationships
 
 Use this repository as a layered security documentation stack:
 
@@ -1417,6 +1508,7 @@ When requirements conflict, architecture and platform constraints in `SecArc.md`
 |---------|------|--------|---------|
 | 1.0 | 2026-02-13 | Security Team | Initial release - comprehensive AI security guidelines |
 | 1.1 | 2026-02-15 | Security Team | Added security-first architecture blueprint and document relationship model |
+| 1.2 | 2026-02-16 | Security Team | Added architecture drift detection strategy and CI/runtime evidence requirements |
 
 ---
 
