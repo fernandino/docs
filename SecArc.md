@@ -1,9 +1,9 @@
 # Secure AI Coding Guidelines
 
-**Version:** 1.2  
+**Version:** 1.3  
 **Effective Date:** February 2026  
 **Classification:** INTERNAL  
-**Last Updated:** 2026-02-16
+**Last Updated:** 2026-02-17
 
 ---
 
@@ -1490,6 +1490,32 @@ Every production release must attach:
 4. Drift report with status table (`MATCH`, `DRIFT`, `MISSING`, `EXTRA`).
 5. Exception approvals for any non-blocking drift.
 
+### 12.9 Reference Implementation Pattern (Actionable)
+
+Use this minimum pipeline contract to make drift detection operational instead of aspirational:
+
+1. `export_reference`: Pull Lucid architecture and normalize to `reference_arch.mmd`.
+2. `extract_impl`: Parse code/IaC and emit `actual_impl.mmd` with evidence links.
+3. `extract_runtime`: Pull runtime topology and emit `actual_runtime.mmd`.
+4. `semantic_diff`: Produce `drift_report.json` and `drift_report.md`.
+5. `policy_gate`: Enforce severity policy and fail CI for unresolved Critical/High drift.
+
+**Mandatory output schema (minimum):**
+
+```json
+{
+  "component": "mcp-gateway",
+  "status": "MATCH|DRIFT|MISSING|EXTRA",
+  "severity": "LOW|MEDIUM|HIGH|CRITICAL",
+  "source": "reference|impl|runtime",
+  "evidence": ["file:path#L10", "k8s:namespace/pod"],
+  "owner": "platform|security|app",
+  "ticket": "SEC-0000"
+}
+```
+
+This section is normative for CI/CD templates in `KuberneteSEC.md` and implementation guardrails in `Guidelines.md`.
+
 ## 13. Document Relationships
 
 Use this repository as a layered security documentation stack:
@@ -1509,6 +1535,7 @@ When requirements conflict, architecture and platform constraints in `SecArc.md`
 | 1.0 | 2026-02-13 | Security Team | Initial release - comprehensive AI security guidelines |
 | 1.1 | 2026-02-15 | Security Team | Added security-first architecture blueprint and document relationship model |
 | 1.2 | 2026-02-16 | Security Team | Added architecture drift detection strategy and CI/runtime evidence requirements |
+| 1.3 | 2026-02-17 | Security Team | Added actionable drift-detection implementation contract and evidence JSON schema |
 
 ---
 
