@@ -22,6 +22,7 @@
 11. [Security-First Architecture Blueprint](#11-security-first-architecture-blueprint)
 12. [Architecture Drift Detection (Design vs Code vs Runtime)](#12-architecture-drift-detection-design-vs-code-vs-runtime)
 13. [Document Relationships](#13-document-relationships)
+14. [Document Control](#document-control)
 
 ---
 
@@ -1399,6 +1400,8 @@ For MCP-enabled agent systems, adopt a four-plane pattern:
 - 100% side-effecting requests evaluated by policy engine.
 - 0 unsigned schema versions accepted in production.
 - Mean time to revoke compromised workload identity < 5 minutes.
+
+<a id="11-architecture-drift-detection"></a>
 
 ## 12. Architecture Drift Detection (Design vs Code vs Runtime)
 
