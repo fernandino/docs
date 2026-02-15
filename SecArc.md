@@ -19,6 +19,8 @@
 8. [Security Tooling & Automation](#8-security-tooling--automation)
 9. [Security Audit Trail](#9-security-audit-trail)
 10. [Quick Reference Card](#10-quick-reference-card)
+11. [Architecture Drift Detection](#11-architecture-drift-detection)
+12. [Document Control](#document-control)
 
 ---
 
@@ -1141,6 +1143,56 @@ const TRUSTED_CONFIG = {
 };
 ```
 
+### 8.5 Architecture Drift CI/CD Gate
+
+Architecture drift checks must run in CI for any PR that modifies architecture-relevant code (application flow, integrations, IaC, networking, identity, or data plane components).
+
+```yaml
+# .github/workflows/architecture-drift.yml
+name: Architecture Drift Detection
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, develop]
+
+jobs:
+  drift-detection:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate actual architecture from code + IaC
+        run: |
+          ./scripts/generate-actual-mermaid.sh > security/architecture-drift/my-system/actual_impl.mmd
+
+      - name: Compare reference vs actual
+        run: |
+          ./scripts/compare-architecture.sh \
+            security/architecture-drift/my-system/reference_arch.mmd \
+            security/architecture-drift/my-system/actual_impl.mmd \
+            > security/architecture-drift/my-system/drift_report.md
+
+      - name: Block on high-severity drift unless approved waiver exists
+        run: |
+          if grep -q "| HIGH |" security/architecture-drift/my-system/drift_report.md \
+            && [ ! -f security/architecture-drift/my-system/drift_waiver.yaml ]; then
+            echo "High-severity architecture drift found; failing build."
+            exit 1
+          fi
+
+      - name: Upload drift artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-drift-artifacts
+          path: security/architecture-drift/my-system/
+```
+
+PR template requirement:
+
+- [ ] Architecture drift check executed; report attached or linked
+
 ---
 
 ## 9. Security Audit Trail
@@ -1202,6 +1254,12 @@ For all security-sensitive features, document:
    - What monitoring is in place?
    - What is the incident response plan?
 
+4. **Architecture Conformance Evidence**
+   - Link to `drift_report.md` for the relevant system
+   - Attach `reference_arch.mmd` and `actual_impl.mmd` snapshots
+   - Include reviewer attestation: "Architecture drift assessed and dispositioned"
+   - Record accepted drifts as residual risk entries with expiry date and owner
+
 ### 9.3 Code Review Security Checklist
 
 ```markdown
@@ -1233,6 +1291,11 @@ For all security-sensitive features, document:
 - [ ] Auth middleware on protected routes
 - [ ] Authorization checked server-side
 - [ ] Principle of least privilege applied
+
+### Architecture Conformance
+- [ ] Drift check completed for architecture-impacting changes
+- [ ] `reference_arch.mmd` vs `actual_impl.mmd` comparison attached
+- [ ] High-severity drift remediated or formally waived by approver
 
 ### Secrets
 - [ ] No hardcoded credentials
@@ -1357,11 +1420,222 @@ if (!result.success) {
 
 ---
 
+## 11. Architecture Drift Detection
+
+### 11.1 Purpose and Scope
+
+Architecture drift detection is a mandatory control to detect divergence between:
+
+1. **Intended design** (reference architecture in Lucid/Mermaid)
+2. **Implemented system** (application code + IaC + runtime infrastructure where applicable)
+
+This control applies to systems with security-sensitive boundaries (auth, data stores, external APIs, queues/events, secrets, network segmentation).
+
+### 11.2 Canonical Artifacts and Location
+
+Use Mermaid as the canonical comparison format for both reference and actual architecture.
+
+Required file set:
+
+- `reference_arch.mmd`
+- `actual_impl.mmd`
+- `drift_report.md`
+
+Recommended location:
+
+```text
+security/
+  architecture-drift/
+    <system-name>/
+      reference_arch.mmd
+      actual_impl.mmd
+      drift_report.md
+      drift_waiver.yaml (optional, approval required)
+```
+
+Each artifact must include metadata header: source, generation timestamp, commit SHA, tool version, and reviewer.
+
+### 11.3 Workflow (Semantic Drift Detection)
+
+1. **Reference Extraction**
+   - Read the reference Lucid document and convert nodes/edges into Mermaid `graph TD`.
+   - Save as `reference_arch.mmd`.
+
+2. **Actual Extraction (Reverse Engineering)**
+   - Scan code and IaC (for example: Python/Node, Terraform/CDK/Bicep).
+   - Generate Mermaid from observed implementation evidence only.
+   - Save as `actual_impl.mmd`.
+
+3. **Semantic Comparison**
+   - Compare reference vs actual artifacts.
+   - Produce `drift_report.md` with all mismatches and evidence.
+
+4. **Disposition and Remediation**
+   - Classify drift severity and assign owner + due date.
+   - Remediate or create approved waiver with expiration.
+
+5. **Re-Validation**
+   - Re-run extraction and comparison after fixes.
+   - Archive final artifacts in PR and release evidence.
+
+### 11.4 Extraction Rules (Strict, Non-Hallucinatory)
+
+Allowed evidence for creating nodes/edges:
+
+- Imported/instantiated service clients
+- Network/API calls
+- Database connection definitions and query execution paths
+- Queue/topic publish-subscribe bindings
+- Auth/identity provider integrations
+- Secret manager and KMS usage
+- IaC resource declarations and bindings
+
+Forbidden inference:
+
+- No component or connection may be added without explicit source evidence.
+
+Node taxonomy:
+
+- `service`, `datastore`, `external-api`, `queue/topic`, `auth-provider`, `observability`
+
+Edge taxonomy:
+
+- `request`, `publish`, `subscribe`, `read/write`, `auth`, `secret-retrieval`
+
+Each edge should include confidence (`high`, `medium`, `low`) and reason.
+
+### 11.5 Drift Classification and Severity
+
+Required drift classes:
+
+- `MISSING`: exists in reference, absent in implementation
+- `EXTRA`: exists in implementation, absent in reference
+- `MODIFIED`: endpoint/protocol/provider mismatch
+- `AMBIGUOUS`: uncertain equivalence (for example rename without clear evidence)
+
+Required report schema:
+
+| Component | Status | Drift Type | Discrepancy Detail | Evidence | Risk | Owner | Due Date |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+
+Severity baseline:
+
+- **HIGH:** auth boundaries, secrets flow, data egress path, internet exposure changes
+- **MEDIUM:** service-to-service path differences affecting trust boundaries
+- **LOW:** non-security observability/documentation inconsistencies
+
+Remediation SLA:
+
+- HIGH: before merge (or approved time-bound waiver)
+- MEDIUM: within current sprint
+- LOW: next planned architecture documentation update
+
+### 11.6 Cloud Runtime Validation (Lucidscale)
+
+For cloud workloads, perform two comparisons:
+
+1. Design vs IaC (planned implementation)
+2. Design vs live cloud runtime (actual deployed state)
+
+When IaC and runtime disagree, runtime state is authoritative for risk triage.
+
+Use Lucidscale-generated runtime diagrams as `actual_runtime` evidence for AWS/Azure/GCP environments.
+
+Important limitation: Lucidscale primarily models cloud resource topology. It may not fully represent workload-level security semantics inside Kubernetes (for example SPIFFE/SPIRE identities, mTLS policy enforcement details, agent-to-agent MCP tool permissions, or dynamic service mesh runtime policy).
+
+### 11.7 Kubernetes + Zero-Trust Supplemental Evidence
+
+For Kubernetes environments (especially with SPIFFE/SPIRE, mTLS, MCP, and agents), runtime architecture evidence must be supplemented with control-plane and data-plane security evidence:
+
+1. **Kubernetes actual state:** `kubectl` exports for namespaces, workloads, services, ingresses, and network policies.
+2. **Identity plane evidence:** SPIRE registration entries and trust domain mappings.
+3. **mTLS enforcement evidence:** service mesh PeerAuthentication/DestinationRule/AuthorizationPolicy (or equivalent) and telemetry proving encrypted/authenticated traffic.
+4. **Agent/MCP evidence:** declared tool permissions, runtime policy bindings, and agent routing boundaries.
+5. **Evidence merge:** normalize all sources into `actual_impl.mmd` + `actual_runtime.mmd` with citations back to source artifacts.
+
+Drift decisions for zero-trust controls must use these supplemental artifacts as authoritative for workload-level security boundaries.
+
+### 11.8 Trigger Conditions and Ownership
+
+Run drift detection at minimum:
+
+- On PRs that impact architecture-relevant components
+- On each release candidate
+- Weekly for critical systems
+
+Ownership:
+
+- Feature team owns initial extraction and remediation
+- Security/architecture reviewer owns final drift disposition approval
+
+Pass criteria:
+
+- No unapproved HIGH drift
+- All drift entries have owner, disposition, and due date
+- Artifacts attached to PR/release evidence
+
+### 11.9 Automated Environment Audit Pipeline (Recommended)
+
+To operationalize comprehensive drift detection and security auditing, implement a scheduled pipeline that builds a composite runtime truth set and executes rule-based audits:
+
+1. **Collect** (hourly/daily per environment)
+   - Cloud topology export (AWS/Azure/GCP)
+   - Kubernetes state export (`kubectl get` for workloads/services/ingress/networkpolicies/rbac)
+   - SPIRE identity mappings and registration entries
+   - Service mesh authn/authz + mTLS policy and telemetry evidence
+   - Agent/MCP tool policy bindings and route boundaries
+
+2. **Normalize**
+   - Convert evidence into a canonical graph format (`actual_runtime.graph.json`) and Mermaid (`actual_runtime.mmd`).
+   - Preserve source citations for every node/edge for audit traceability.
+
+3. **Compare**
+   - Diff `reference_arch.mmd` against `actual_impl.mmd` and `actual_runtime.mmd`.
+   - Run semantic policy checks (identity trust boundary, plaintext link, wildcard permissions, unexpected egress).
+
+4. **Score + Gate**
+   - Produce `drift_report.md` and machine-readable `drift_report.json`.
+   - Block deployment when HIGH drift is unapproved.
+   - Open ticket automatically with owner, severity, and remediation SLA.
+
+5. **Attest + Archive**
+   - Sign evidence bundles (hash, timestamp, collector version).
+   - Store reports as immutable CI artifacts and link in PR/release records.
+
+### 11.10 Red-Team Attack-Path Audit (BloodHound-Style)
+
+In addition to drift reporting, run graph-based attack-path analysis to emulate adversary movement and privilege escalation:
+
+1. Model a graph of principals, identities, workloads, permissions, network reachability, and secret access.
+2. Define likely entry points (compromised pod, leaked token, exposed MCP endpoint).
+3. Compute shortest/highest-impact paths to crown jewels (PII datastore, secrets manager, control plane).
+4. Mark path choke points (missing network policy, weak SPIFFE selector, over-broad MCP permission, mTLS gap).
+5. Emit red-team style report with reproducible evidence.
+
+Required report format (`redteam_report.md`):
+
+| Path ID | Entry Point | Target Asset | Attack Path Summary | Control Gap | Severity | Detection Signal | Recommended Fix |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+
+Minimum mandatory checks:
+
+- [ ] Any workload can reach control plane API without explicit authorization.
+- [ ] Any service-to-service path expected to be mTLS is observed plaintext.
+- [ ] Any SPIFFE/SPIRE identity is over-scoped relative to intended trust domain.
+- [ ] Any MCP tool policy allows wildcard or cross-boundary invocation.
+- [ ] Any path exists from internet-exposed edge to crown-jewel data without policy enforcement hop.
+
+This attack-path audit must run alongside drift detection for production and pre-production environments.
+
+---
+
 ## Document Control
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-02-13 | Security Team | Initial release - comprehensive AI security guidelines |
+| 1.1 | 2026-02-15 | Security Team | Added architecture drift detection controls, CI gate guidance, audit trail integration, and Kubernetes zero-trust runtime caveats |
+| 1.2 | 2026-02-15 | Security Team | Added automated environment audit pipeline and BloodHound-style red-team attack-path audit requirements |
 
 ---
 
