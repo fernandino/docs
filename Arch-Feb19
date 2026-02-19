@@ -1,0 +1,2642 @@
+# SECOMP-V3 Development Summary - 19 February 2026
+
+> **Project:** SAP Security Compliance Checker (SECOMP-V3)  
+> **Date:** Thursday, 19 February 2026  
+> **Status:** Development Sprint Complete
+
+---
+
+## Section 1: Completed Tasks Today (19 Feb 2026)
+
+### 1.1 Business Risk Dashboard Integration
+
+**Status:** COMPLETED
+
+Integrated a comprehensive Business Risk Dashboard into the WebUI, providing Monte Carlo simulation-based risk analysis and financial impact visualization.
+
+#### Features Implemented
+
+| Component | Description |
+|-----------|-------------|
+| **Business Context Form** | Collects industry, revenue, employees, data types processed, and operating regions |
+| **Monte Carlo Simulation** | 10,000 iteration risk simulation with configurable parameters |
+| **Executive Summary** | High-level risk metrics with traffic light indicators |
+| **Financial Impact Chart** | Visualizes potential breach costs by category |
+| **Regulatory Exposure Matrix** | Maps compliance requirements by region (GDPR, CCPA, etc.) |
+| **Risk Scenario Cards** | Displays top risk scenarios with probability and impact |
+| **Monte Carlo Distribution** | Histogram of simulated breach costs |
+| **ROI Analysis** | Cost-benefit analysis of security controls |
+
+#### Files Modified
+
+```
+public/
+├── index.html          (+197 lines)  # Dashboard HTML structure
+├── styles.css          (+152 lines)  # Dashboard styling
+└── modules/
+    ├── app-v3.js       (+423 lines)  # Dashboard logic & Monte Carlo
+    └── api.js          (+130 lines)  # Risk analysis API endpoints
+```
+
+#### Technical Details
+
+- **Simulation Engine:** Client-side Monte Carlo with Web Workers for non-blocking computation
+- **Visualization:** Chart.js for interactive charts
+- **Data Binding:** Real-time updates as business context changes
+- **Responsive Design:** Mobile-friendly grid layout
+
+---
+
+### 1.2 HANA JWT Trust Configuration
+
+**Status:** COMPLETED
+
+Created SQL setup script for configuring HANA Cloud to trust JWT tokens from XSUAA.
+
+#### File Created
+
+```
+scripts/hana-jwt-trust-setup.sql
+```
+
+#### Configuration Details
+
+- JWT issuer trust configuration
+- Token validation parameters
+- Role mapping from XSUAA scopes to HANA privileges
+- Audit logging for authentication events
+
+---
+
+### 1.3 Cloud Foundry Deployment of SECOMP-V3
+
+**Status:** COMPLETED (Stopped due to quota)
+
+Successfully deployed SECOMP-V3 to SAP BTP Cloud Foundry environment.
+
+#### Deployment URL
+
+```
+https://secomp-v3.cfapps.eu11.hana.ondemand.com
+```
+
+#### Files Updated
+
+| File | Changes |
+|------|---------|
+| `cf/xs-security.json` | Updated for secomp-v3 scopes and role templates |
+| `cf/manifest.yml` | Configured to use secomp-v2-secrets, 512MB memory |
+| `cf/deploy.sh` | Updated deployment script for V3 |
+
+#### Services Bound
+
+```yaml
+services:
+  - secomp-v3-xsuaa      # Authentication & Authorization
+  - secomp-v2-secrets    # User-provided secrets (API keys)
+  - secomp-hdi           # HANA HDI container (shared)
+```
+
+#### Current State
+
+```
+Application: secomp-v3
+State: STOPPED (memory quota constraint)
+Memory: 512MB allocated
+Instances: 0/1
+```
+
+> **Note:** Application stopped to conserve memory quota. Can only run 2 applications simultaneously within 1GB limit.
+
+---
+
+### 1.4 Security Audit Performed
+
+**Status:** COMPLETED
+
+Conducted comprehensive security audit against SAP Security Requirements baseline.
+
+#### Overall Compliance Score: 78%
+
+| Requirement | Status | Details |
+|-------------|--------|---------|
+| **SEC-139** (DoS Protection) | PARTIAL | Rate limiting implemented but not globally applied |
+| **SEC-100** (Authentication) | COMPLIANT | XSUAA integration with JWT validation |
+| **SEC-220** (Authorization) | PARTIAL | Scope checks missing on some endpoints |
+| **SEC-228** (Secure Defaults) | COMPLIANT | Security headers, HTTPS enforced |
+| **SEC-330** (Input Validation) | COMPLIANT | Zod schemas on all API inputs |
+
+#### Detailed Findings
+
+##### SEC-139 - DoS Protection (PARTIAL)
+
+```typescript
+// Current Implementation
+app.use('/api/compliance/analyze', rateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 100
+}));
+
+// Missing: Global rate limiting on all routes
+// Missing: Audit log service binding
+```
+
+##### SEC-220 - Authorization (PARTIAL)
+
+```typescript
+// Routes missing scope checks:
+- GET /api/requirements/:id
+- GET /api/requirements/search
+- GET /api/health (acceptable - public endpoint)
+```
+
+---
+
+### 1.5 SEC-K8S Agent Enhanced with SPIFFE/SPIRE
+
+**Status:** COMPLETED
+
+Enhanced the SEC-K8S domain expert agent with comprehensive SPIFFE/SPIRE implementation knowledge.
+
+#### Changes Made
+
+1. **System Prompt Enhancement**
+   - Added detailed SPIFFE/SPIRE architecture knowledge
+   - Included best practices for ephemeral credentials
+   - Added troubleshooting guidance
+
+2. **Deployment Templates Created**
+
+   ```
+   kyma/spiffe-spire/
+   ├── spire-server-deployment.yaml
+   ├── spire-server-configmap.yaml
+   ├── spire-server-service.yaml
+   ├── spire-agent-daemonset.yaml
+   ├── spire-agent-configmap.yaml
+   ├── spiffe-csi-driver.yaml
+   ├── cluster-spiffe-id.yaml
+   └── workload-registration.yaml
+   ```
+
+3. **Dynamic Template Generation**
+
+   ```typescript
+   // Added to SEC-K8S agent
+   generateSPIFFEDeploymentTemplates(options: {
+     trustDomain: string;
+     clusterName: string;
+     namespace: string;
+     workloadSelector: Record<string, string>;
+   }): DeploymentManifest[]
+   ```
+
+4. **Shared Knowledge Base Updated**
+
+   ```typescript
+   // shared-security-knowledge.ts
+   export const SPIFFE_SPIRE_KNOWLEDGE = {
+     architecture: { /* ... */ },
+     trustDomain: { /* ... */ },
+     workloadIdentity: { /* ... */ },
+     integrations: { /* ... */ }
+   };
+   ```
+
+---
+
+## Section 2: Known Issues Identified
+
+### Issue #1: Requirements Not Displaying in UI
+
+**Severity:** HIGH  
+**Component:** WebUI / API Integration
+
+#### Problem Description
+
+Requirements data fetched from API but not rendering in the UI due to context naming mismatch.
+
+#### Root Cause
+
+```typescript
+// API returns snake_case
+{
+  "requirement_id": "SEC-100",
+  "requirement_title": "Authentication Required",
+  "compliance_status": "COMPLIANT"
+}
+
+// UI expects camelCase
+{
+  "requirementId": "SEC-100",
+  "requirementTitle": "Authentication Required",
+  "complianceStatus": "COMPLIANT"
+}
+```
+
+#### Affected Files
+
+- `public/modules/app-v3.js` - Line 234
+- `src/api/routes/requirements.ts` - Response serialization
+
+#### Suggested Fix
+
+```typescript
+// Option A: Transform in API response
+const camelCaseResponse = transformKeys(result, 'camelCase');
+
+// Option B: Transform in UI
+const data = transformKeys(apiResponse, 'camelCase');
+```
+
+---
+
+### Issue #2: Excluded Controls Count Always 0
+
+**Severity:** MEDIUM  
+**Component:** Compliance Analyzer
+
+#### Problem Description
+
+The excluded controls count in compliance reports always shows 0, regardless of actual exclusions.
+
+#### Root Cause
+
+```typescript
+// compliance-analyzer.ts - Line 156
+const analysisResult = {
+  totalControls: controls.length,
+  passedControls: passed.length,
+  failedControls: failed.length,
+  excludedControls: 0,  // HARDCODED VALUE
+  // Should be: excludedControls: excluded.length
+};
+```
+
+#### Impact
+
+- Inaccurate compliance metrics
+- Misleading audit reports
+- User confusion about control coverage
+
+---
+
+### Issue #3: Category Filter Not Applied
+
+**Severity:** MEDIUM  
+**Component:** Requirements API
+
+#### Problem Description
+
+When users filter requirements by category, the filter is ignored and all requirements are returned.
+
+#### Root Cause
+
+```typescript
+// requirements.ts - Line 89
+async function getRequirements(options: GetRequirementsOptions) {
+  const { tier, deploymentMode } = options;
+  // BUG: userCategories is never destructured or used
+  
+  const query = buildQuery({ tier, deploymentMode });
+  // userCategories not passed to buildQuery
+}
+```
+
+#### Suggested Fix
+
+```typescript
+async function getRequirements(options: GetRequirementsOptions) {
+  const { tier, deploymentMode, userCategories } = options;
+  
+  const query = buildQuery({ tier, deploymentMode, userCategories });
+  // ...
+}
+```
+
+---
+
+### Issue #4: Memory Quota Constraint
+
+**Severity:** LOW (Operational)  
+**Component:** Cloud Foundry Deployment
+
+#### Problem Description
+
+SAP BTP Cloud Foundry trial has 1GB memory limit, allowing only 2 applications to run simultaneously.
+
+#### Current Allocation
+
+| Application | Memory | Status |
+|-------------|--------|--------|
+| secomp-v2 | 512MB | Running |
+| secomp-api | 256MB | Running |
+| secomp-v3 | 512MB | **Stopped** |
+| **Total** | 1280MB | **Exceeds 1GB limit** |
+
+#### Workarounds
+
+1. Stop secomp-v2 when testing v3
+2. Use Kyma instead (separate quota)
+3. Upgrade to production account
+4. Optimize memory usage per app
+
+---
+
+## Section 3: Recommendations for Enhancement
+
+### Priority Matrix
+
+| Priority | Recommendation | Effort | Impact |
+|----------|---------------|--------|--------|
+| **P1** | Fix Requirements Display Bug | Low | High |
+| **P1** | Add Global Rate Limiting | Medium | High |
+| **P2** | Apply Scope Checks to All Routes | Medium | High |
+| **P2** | Bind Audit Log Service | Low | Medium |
+| **P3** | Configure X.509 XSUAA Credentials | Medium | Medium |
+| **P3** | Set Up Vulnerability Scanning | High | High |
+
+---
+
+### Recommendation 1: Fix Requirements Display Bug
+
+**Priority:** HIGH  
+**Effort:** 2-4 hours
+
+#### Implementation Steps
+
+1. Create a transformation utility:
+
+   ```typescript
+   // utils/case-transform.ts
+   export function snakeToCamel<T>(obj: T): T {
+     if (Array.isArray(obj)) {
+       return obj.map(snakeToCamel) as T;
+     }
+     if (obj && typeof obj === 'object') {
+       return Object.entries(obj).reduce((acc, [key, value]) => {
+         const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+         acc[camelKey] = snakeToCamel(value);
+         return acc;
+       }, {} as any);
+     }
+     return obj;
+   }
+   ```
+
+2. Apply in API response middleware:
+
+   ```typescript
+   app.use('/api', (req, res, next) => {
+     const originalJson = res.json.bind(res);
+     res.json = (data) => originalJson(snakeToCamel(data));
+     next();
+   });
+   ```
+
+---
+
+### Recommendation 2: Add Global Rate Limiting Middleware
+
+**Priority:** HIGH  
+**Effort:** 4-8 hours
+
+#### Implementation
+
+```typescript
+// middleware/rate-limiter.ts
+import rateLimit from 'express-rate-limit';
+import RedisStore from 'rate-limit-redis';
+
+export const globalRateLimiter = rateLimit({
+  store: new RedisStore({
+    // Use Redis for distributed rate limiting
+    sendCommand: (...args) => redisClient.call(...args),
+  }),
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 1000, // Global limit per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({
+      error: 'Too many requests',
+      retryAfter: res.getHeader('Retry-After'),
+    });
+  },
+});
+
+// Stricter limits for sensitive endpoints
+export const sensitiveRateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10,
+  message: { error: 'Rate limit exceeded for sensitive operation' },
+});
+```
+
+#### Apply in Application
+
+```typescript
+// app.ts
+import { globalRateLimiter, sensitiveRateLimiter } from './middleware/rate-limiter';
+
+app.use(globalRateLimiter);
+app.use('/api/compliance/analyze', sensitiveRateLimiter);
+app.use('/api/auth', sensitiveRateLimiter);
+```
+
+---
+
+### Recommendation 3: Apply Scope Checks to All API Routes
+
+**Priority:** HIGH  
+**Effort:** 4-6 hours
+
+#### Implementation
+
+```typescript
+// middleware/scope-check.ts
+import { Request, Response, NextFunction } from 'express';
+
+export function requireScope(...scopes: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const userScopes = req.authInfo?.getScopes() || [];
+    
+    const hasScope = scopes.some(scope => 
+      userScopes.includes(scope) || userScopes.includes(`${scope}.read`)
+    );
+    
+    if (!hasScope) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: `Required scope: ${scopes.join(' or ')}`,
+      });
+    }
+    
+    next();
+  };
+}
+```
+
+#### Apply to Routes
+
+```typescript
+// routes/requirements.ts
+router.get('/requirements/:id', 
+  requireScope('Requirements.Read', 'Admin'),
+  getRequirementById
+);
+
+router.get('/requirements/search',
+  requireScope('Requirements.Read', 'Admin'),
+  searchRequirements
+);
+```
+
+---
+
+### Recommendation 4: Bind Audit Log Service
+
+**Priority:** MEDIUM  
+**Effort:** 2-4 hours
+
+#### Steps
+
+1. Create service instance:
+
+   ```bash
+   cf create-service auditlog standard secomp-audit-log
+   ```
+
+2. Update manifest.yml:
+
+   ```yaml
+   services:
+     - secomp-v3-xsuaa
+     - secomp-v2-secrets
+     - secomp-audit-log  # Add this
+   ```
+
+3. Implement audit logging:
+
+   ```typescript
+   // services/audit-logger.ts
+   import { AuditLogService } from '@sap/audit-logging';
+   
+   export async function logSecurityEvent(event: SecurityEvent) {
+     const auditLog = new AuditLogService();
+     await auditLog.securityMessage(event.message)
+       .by(event.user)
+       .externalIP(event.ip)
+       .log();
+   }
+   ```
+
+---
+
+### Recommendation 5: Configure X.509 Credential-Type for XSUAA
+
+**Priority:** MEDIUM  
+**Effort:** 4-6 hours
+
+#### Benefits
+
+- Eliminates client secrets
+- Automatic credential rotation
+- Enhanced security posture
+- Required for SEC-AUTH compliance
+
+#### Implementation
+
+1. Update xs-security.json:
+
+   ```json
+   {
+     "xsappname": "secomp-v3",
+     "tenant-mode": "dedicated",
+     "credential-types": ["x509"],
+     "oauth2-configuration": {
+       "credential-types": ["x509"]
+     }
+   }
+   ```
+
+2. Update service binding:
+
+   ```bash
+   cf bind-service secomp-v3 secomp-v3-xsuaa \
+     -c '{"credential-type": "x509"}'
+   ```
+
+---
+
+### Recommendation 6: Set Up Vulnerability Scanning in CI/CD
+
+**Priority:** MEDIUM  
+**Effort:** 8-16 hours
+
+#### Implementation
+
+```yaml
+# .github/workflows/security-scan.yml
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6 AM
+
+jobs:
+  dependency-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run npm audit
+        run: npm audit --audit-level=high
+        
+      - name: Run Snyk
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          
+  sast-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run CodeQL
+        uses: github/codeql-action/analyze@v3
+        with:
+          languages: typescript, javascript
+          
+  container-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build image
+        run: docker build -t secomp-v3:${{ github.sha }} .
+        
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: secomp-v3:${{ github.sha }}
+          severity: 'HIGH,CRITICAL'
+```
+
+---
+
+## Section 4: Multi-Agent Architecture Deployment Strategy for Kyma
+
+### 4.1 Architecture Overview
+
+SECOMP-V3 implements a sophisticated multi-agent architecture for security compliance analysis. Understanding this architecture is crucial for planning an effective Kyma deployment strategy.
+
+#### System Components
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           SECOMP-V3 Architecture                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                     Chief Architect Agent                            │    │
+│  │                       (Orchestrator)                                 │    │
+│  │  • Task decomposition & delegation                                   │    │
+│  │  • Agent coordination via A2A protocol                               │    │
+│  │  • Response aggregation & synthesis                                  │    │
+│  │  • Conflict resolution between agents                                │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                    │                                         │
+│                    ┌───────────────┼───────────────┐                        │
+│                    ▼               ▼               ▼                        │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │                      Domain Expert Agents (14)                        │   │
+│  ├──────────────────────────────────────────────────────────────────────┤   │
+│  │                                                                       │   │
+│  │  Identity & Access          Data Protection         Infrastructure   │   │
+│  │  ┌─────────────┐           ┌─────────────┐         ┌─────────────┐   │   │
+│  │  │  SEC-AUTH   │           │  SEC-DATA   │         │  SEC-K8S    │   │   │
+│  │  │  SEC-IMA    │           │  SEC-PRI    │         │  SEC-COM    │   │   │
+│  │  └─────────────┘           │  SEC-LOG    │         │  SEC-NET    │   │   │
+│  │                            └─────────────┘         └─────────────┘   │   │
+│  │                                                                       │   │
+│  │  Application Security       Cryptography           Compliance        │   │
+│  │  ┌─────────────┐           ┌─────────────┐         ┌─────────────┐   │   │
+│  │  │  SEC-APP    │           │  SEC-CRYPTO │         │  SEC-AUDIT  │   │   │
+│  │  │  SEC-API    │           │  SEC-KEY    │         │  SEC-RISK   │   │   │
+│  │  └─────────────┘           └─────────────┘         └─────────────┘   │   │
+│  │                                                                       │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                         │
+│                    ┌───────────────┴───────────────┐                        │
+│                    ▼                               ▼                        │
+│  ┌────────────────────────────┐    ┌────────────────────────────────────┐   │
+│  │     RAG Pipeline           │    │         External Services          │   │
+│  │  ┌──────────────────────┐  │    │  ┌─────────────────────────────┐   │   │
+│  │  │  HANA Vector Store   │  │    │  │  SAP AI Core (GPT-4/Claude) │   │   │
+│  │  │  • 500+ requirements │  │    │  │  XSUAA (Authentication)     │   │   │
+│  │  │  • Semantic search   │  │    │  │  Audit Log Service          │   │   │
+│  │  │  • Embeddings        │  │    │  │  Destination Service        │   │   │
+│  │  └──────────────────────┘  │    │  └─────────────────────────────┘   │   │
+│  └────────────────────────────┘    └────────────────────────────────────┘   │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Agent Responsibilities
+
+| Agent | Domain | Key Capabilities |
+|-------|--------|------------------|
+| **SEC-AUTH** | Authentication | SSO, MFA, OAuth 2.0, SAML, session management |
+| **SEC-IMA** | Identity Management | User provisioning, lifecycle, federation |
+| **SEC-DATA** | Data Protection | Encryption at rest, data classification, DLP |
+| **SEC-PRI** | Privacy | GDPR, CCPA, consent management, data retention |
+| **SEC-LOG** | Logging & Monitoring | Audit trails, SIEM integration, alerting |
+| **SEC-K8S** | Kubernetes Security | Pod security, RBAC, network policies, SPIFFE |
+| **SEC-COM** | Communication Security | TLS, mTLS, certificate management |
+| **SEC-NET** | Network Security | Firewalls, segmentation, WAF, DDoS |
+| **SEC-APP** | Application Security | OWASP Top 10, secure coding, SAST/DAST |
+| **SEC-API** | API Security | Rate limiting, input validation, API gateway |
+| **SEC-CRYPTO** | Cryptography | Algorithms, key lengths, HSM, quantum-safe |
+| **SEC-KEY** | Key Management | Key rotation, secure storage, KMS |
+| **SEC-AUDIT** | Compliance Auditing | Gap analysis, evidence collection, reporting |
+| **SEC-RISK** | Risk Assessment | Threat modeling, risk scoring, prioritization |
+
+#### A2A (Agent-to-Agent) Protocol
+
+The A2A protocol enables structured communication between agents:
+
+```typescript
+interface A2AMessage {
+  // Message identification
+  messageId: string;
+  correlationId: string;  // Links related messages
+  
+  // Routing
+  from: AgentId;
+  to: AgentId | AgentId[];
+  
+  // Message type
+  type: 'REQUEST' | 'RESPONSE' | 'BROADCAST' | 'DELEGATE';
+  
+  // Content
+  intent: string;
+  payload: {
+    context: AnalysisContext;
+    requirements?: RequirementId[];
+    findings?: Finding[];
+    recommendations?: Recommendation[];
+  };
+  
+  // Metadata
+  priority: 'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL';
+  timestamp: ISO8601;
+  ttl: number;  // Time to live in seconds
+}
+```
+
+---
+
+### 4.2 Deployment Options Analysis
+
+#### Option A: Monolithic Deployment (Single Pod)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Single Pod                                │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                    secomp-v3 Container                     │  │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐         │  │
+│  │  │ Orchestrator│ │  SEC-AUTH   │ │  SEC-DATA   │   ...   │  │
+│  │  └─────────────┘ └─────────────┘ └─────────────┘         │  │
+│  │  ┌──────────────────────────────────────────────────────┐ │  │
+│  │  │              Shared Memory / Event Bus                │ │  │
+│  │  └──────────────────────────────────────────────────────┘ │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Implementation:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secomp-v3-monolith
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: secomp-v3
+          image: secomp-v3:latest
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          env:
+            - name: DEPLOYMENT_MODE
+              value: "monolith"
+```
+
+**Advantages:**
+
+| Advantage | Description |
+|-----------|-------------|
+| Simple Deployment | Single container, single image, straightforward CI/CD |
+| Low Latency | In-process communication, no network overhead |
+| Shared Memory | Efficient data sharing between agents |
+| Easy Debugging | Single log stream, unified tracing |
+| Lower Resource Overhead | No service mesh sidecar per agent |
+
+**Disadvantages:**
+
+| Disadvantage | Description |
+|--------------|-------------|
+| Single Point of Failure | One crash affects all agents |
+| No Independent Scaling | Can't scale hot agents (SEC-AUTH) separately |
+| Resource Contention | CPU/memory competition between agents |
+| Deployment Coupling | Must redeploy all agents for one change |
+| Memory Limitations | 14 agents + LLM context = high memory footprint |
+
+**Best For:**
+
+- Development and testing environments
+- Small-scale deployments (< 100 requests/hour)
+- Initial production MVP
+- Cost-constrained scenarios
+
+---
+
+#### Option B: Microservices Deployment (Agent per Pod)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Microservices Deployment                             │
+│                                                                              │
+│  ┌───────────────┐   ┌───────────────┐   ┌───────────────┐                  │
+│  │ Orchestrator  │   │   SEC-AUTH    │   │   SEC-DATA    │    ... (14)      │
+│  │     Pod       │   │     Pod       │   │     Pod       │                  │
+│  │  ┌─────────┐  │   │  ┌─────────┐  │   │  ┌─────────┐  │                  │
+│  │  │Container│  │   │  │Container│  │   │  │Container│  │                  │
+│  │  └─────────┘  │   │  └─────────┘  │   │  └─────────┘  │                  │
+│  │  ┌─────────┐  │   │  ┌─────────┐  │   │  ┌─────────┐  │                  │
+│  │  │ Envoy   │  │   │  │ Envoy   │  │   │  │ Envoy   │  │                  │
+│  │  │ Sidecar │  │   │  │ Sidecar │  │   │  │ Sidecar │  │                  │
+│  │  └─────────┘  │   │  └─────────┘  │   │  └─────────┘  │                  │
+│  └───────────────┘   └───────────────┘   └───────────────┘                  │
+│           │                   │                   │                          │
+│           └───────────────────┴───────────────────┘                          │
+│                               │                                              │
+│                    ┌──────────┴──────────┐                                   │
+│                    │   Istio Service     │                                   │
+│                    │       Mesh          │                                   │
+│                    └─────────────────────┘                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Implementation:**
+
+```yaml
+# orchestrator-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secomp-orchestrator
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: orchestrator
+          image: secomp-orchestrator:latest
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+---
+# sec-auth-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secomp-sec-auth
+spec:
+  replicas: 3  # Scale independently
+  template:
+    spec:
+      containers:
+        - name: sec-auth
+          image: secomp-sec-auth:latest
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+```
+
+**Advantages:**
+
+| Advantage | Description |
+|-----------|-------------|
+| Independent Scaling | Scale SEC-AUTH to 10 replicas during peak |
+| Fault Isolation | SEC-CRYPTO crash doesn't affect SEC-AUTH |
+| Technology Flexibility | Different agents can use different runtimes |
+| Fine-grained Resources | Allocate 2GB to SEC-DATA, 256MB to SEC-LOG |
+| Independent Deployment | Update SEC-K8S without touching others |
+
+**Disadvantages:**
+
+| Disadvantage | Description |
+|--------------|-------------|
+| Network Latency | Agent-to-agent calls add ~5-10ms each |
+| Complex Orchestration | Need robust service discovery, retries |
+| Resource Overhead | 15 Envoy sidecars = ~1.5GB extra memory |
+| Operational Complexity | 15 deployments to monitor and maintain |
+| Cost | More pods = higher cloud costs |
+
+**Best For:**
+
+- Large-scale production (> 10,000 requests/hour)
+- Organizations with mature K8s operations
+- When individual agents need different SLAs
+- Multi-team development scenarios
+
+---
+
+#### Option C: Hybrid Deployment (Recommended)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          Hybrid Deployment                                    │
+│                                                                               │
+│  ┌─────────────────────┐                                                      │
+│  │    Orchestrator     │                                                      │
+│  │        Pod          │                                                      │
+│  │  ┌───────────────┐  │                                                      │
+│  │  │  Chief Agent  │  │                                                      │
+│  │  │  A2A Router   │  │                                                      │
+│  │  └───────────────┘  │                                                      │
+│  └─────────────────────┘                                                      │
+│            │                                                                  │
+│  ┌─────────┴─────────┬──────────────────┬──────────────────┐                 │
+│  ▼                   ▼                  ▼                  ▼                 │
+│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────┐ │
+│  │  Identity Pod   │ │   Data Pod      │ │Infrastructure   │ │  App Pod    │ │
+│  │  ┌───────────┐  │ │  ┌───────────┐  │ │     Pod         │ │ ┌─────────┐ │ │
+│  │  │ SEC-AUTH  │  │ │  │ SEC-DATA  │  │ │ ┌───────────┐   │ │ │ SEC-APP │ │ │
+│  │  │ SEC-IMA   │  │ │  │ SEC-PRI   │  │ │ │ SEC-K8S   │   │ │ │ SEC-API │ │ │
+│  │  └───────────┘  │ │  │ SEC-LOG   │  │ │ │ SEC-COM   │   │ │ └─────────┘ │ │
+│  │                 │ │  └───────────┘  │ │ │ SEC-NET   │   │ │             │ │
+│  └─────────────────┘ └─────────────────┘ │ └───────────┘   │ └─────────────┘ │
+│                                          └─────────────────┘                 │
+│                                                                               │
+│  ┌─────────────────┐ ┌─────────────────┐                                     │
+│  │  Crypto Pod     │ │ Compliance Pod  │                                     │
+│  │  ┌───────────┐  │ │  ┌───────────┐  │                                     │
+│  │  │SEC-CRYPTO │  │ │  │ SEC-AUDIT │  │                                     │
+│  │  │ SEC-KEY   │  │ │  │ SEC-RISK  │  │                                     │
+│  │  └───────────┘  │ │  └───────────┘  │                                     │
+│  └─────────────────┘ └─────────────────┘                                     │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Agent Groupings:**
+
+| Pod Name | Agents | Rationale |
+|----------|--------|-----------|
+| **identity-agents** | SEC-AUTH, SEC-IMA | Both deal with user identity, share auth context |
+| **data-agents** | SEC-DATA, SEC-PRI, SEC-LOG | Data lifecycle management, logging correlation |
+| **infra-agents** | SEC-K8S, SEC-COM, SEC-NET | Infrastructure concerns, network stack |
+| **app-agents** | SEC-APP, SEC-API | Application layer, API concerns |
+| **crypto-agents** | SEC-CRYPTO, SEC-KEY | Cryptographic operations, key management |
+| **compliance-agents** | SEC-AUDIT, SEC-RISK | Audit and risk, report generation |
+
+**Implementation:**
+
+```yaml
+# identity-agents-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secomp-identity-agents
+  labels:
+    app: secomp
+    agent-group: identity
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      agent-group: identity
+  template:
+    metadata:
+      labels:
+        agent-group: identity
+    spec:
+      containers:
+        - name: sec-auth
+          image: secomp-agents:latest
+          args: ["--agent=SEC-AUTH"]
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+        - name: sec-ima
+          image: secomp-agents:latest
+          args: ["--agent=SEC-IMA"]
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+      # Shared volume for fast intra-pod communication
+      volumes:
+        - name: agent-shared
+          emptyDir:
+            medium: Memory
+            sizeLimit: "128Mi"
+```
+
+**Advantages:**
+
+| Advantage | Description |
+|-----------|-------------|
+| Balanced Complexity | 7 deployments vs 15, manageable ops burden |
+| Logical Grouping | Related agents share context and memory |
+| Efficient Communication | Intra-pod: shared memory, inter-pod: gRPC |
+| Reasonable Scaling | Scale identity-agents during auth-heavy loads |
+| Fault Domains | Crypto failure doesn't affect identity |
+
+**Disadvantages:**
+
+| Disadvantage | Description |
+|--------------|-------------|
+| Coupling Within Group | SEC-AUTH crash affects SEC-IMA |
+| More Complex than Monolith | Still need service mesh, networking |
+| Grouping Decisions | Must carefully decide agent groupings |
+
+**Best For:**
+
+- Medium to large-scale production
+- Most enterprise deployments
+- Balance of scalability and operational simplicity
+- Teams transitioning from monolith
+
+---
+
+### 4.3 Kyma-Specific Considerations
+
+Kyma provides a Kubernetes-based runtime with SAP-specific extensions. These features significantly impact deployment strategy:
+
+#### Istio Service Mesh
+
+Kyma includes Istio by default, providing:
+
+```yaml
+# Automatic mTLS between agents
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: secomp-mtls
+  namespace: secomp-agents
+spec:
+  mtls:
+    mode: STRICT  # All traffic must be mTLS
+```
+
+**Benefits for Multi-Agent:**
+- Zero-trust networking between agents
+- Automatic certificate rotation
+- No application-level TLS code needed
+- Traffic encryption without code changes
+
+#### SPIFFE/SPIRE Integration
+
+Kyma supports SPIFFE for workload identity:
+
+```yaml
+# ClusterSPIFFEID for agent identity
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: secomp-sec-auth
+spec:
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      agent: sec-auth
+```
+
+**Benefits:**
+- Each agent gets cryptographic identity
+- Short-lived credentials (1 hour TTL)
+- No static secrets in environment variables
+- Attestation-based trust
+
+#### API Gateway (APIRule)
+
+External access through Kyma API Gateway:
+
+```yaml
+apiVersion: gateway.kyma-project.io/v1beta1
+kind: APIRule
+metadata:
+  name: secomp-api
+  namespace: secomp-orchestrator
+spec:
+  host: secomp-api.kyma.example.com
+  service:
+    name: secomp-orchestrator
+    port: 8080
+  gateway: kyma-system/kyma-gateway
+  rules:
+    - path: /api/.*
+      methods: ["GET", "POST"]
+      accessStrategies:
+        - handler: jwt
+          config:
+            jwks_urls:
+              - https://auth.kyma.example.com/.well-known/jwks.json
+            trusted_issuers:
+              - https://auth.kyma.example.com
+```
+
+#### Horizontal Pod Autoscaler
+
+Scale agents based on demand:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: identity-agents-hpa
+  namespace: secomp-agents
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: secomp-identity-agents
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Pods
+      pods:
+        metric:
+          name: a2a_messages_pending
+        target:
+          type: AverageValue
+          averageValue: "100"
+```
+
+#### Service Binding for BTP Services
+
+Kyma's Service Catalog integrates with SAP BTP:
+
+```yaml
+# Bind HANA Cloud to orchestrator
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceBinding
+metadata:
+  name: hana-binding
+  namespace: secomp-orchestrator
+spec:
+  serviceInstanceName: secomp-hana
+  secretName: hana-credentials
+  credentialsRotationPolicy:
+    enabled: true
+    rotationFrequency: 720h  # 30 days
+```
+
+---
+
+### 4.4 Recommended Architecture for Kyma
+
+Based on the analysis, the recommended deployment architecture for SECOMP-V3 on Kyma:
+
+#### Namespace Strategy
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         Kyma Cluster                                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │                    secomp-orchestrator (Namespace)                       │ │
+│  │  • Chief Architect Agent                                                 │ │
+│  │  • API Gateway (external access)                                         │ │
+│  │  • BTP Service Bindings (XSUAA, AI Core)                                │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                                      │                                        │
+│                                      │ A2A Protocol (gRPC/mTLS)              │
+│                                      ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │                      secomp-agents (Namespace)                           │ │
+│  │  • Identity Agents Pod (SEC-AUTH, SEC-IMA)                              │ │
+│  │  • Data Agents Pod (SEC-DATA, SEC-PRI, SEC-LOG)                         │ │
+│  │  • Infrastructure Agents Pod (SEC-K8S, SEC-COM, SEC-NET)                │ │
+│  │  • Application Agents Pod (SEC-APP, SEC-API)                            │ │
+│  │  • Crypto Agents Pod (SEC-CRYPTO, SEC-KEY)                              │ │
+│  │  • Compliance Agents Pod (SEC-AUDIT, SEC-RISK)                          │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                                      │                                        │
+│                                      │ SQL/Vector Search                      │
+│                                      ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │                       secomp-data (Namespace)                            │ │
+│  │  • HANA Cloud Binding (HDI Container)                                    │ │
+│  │  • Redis Cache (session, rate limiting)                                  │ │
+│  │  • Audit Log Service Binding                                             │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Pod Groupings Detail
+
+| Pod | Agents | Resources | Replicas | HPA Max |
+|-----|--------|-----------|----------|---------|
+| **orchestrator** | Chief Architect | 1Gi / 500m | 2 | 5 |
+| **identity-agents** | SEC-AUTH, SEC-IMA | 512Mi / 250m | 2 | 8 |
+| **data-agents** | SEC-DATA, SEC-PRI, SEC-LOG | 768Mi / 300m | 2 | 6 |
+| **infra-agents** | SEC-K8S, SEC-COM, SEC-NET | 512Mi / 250m | 2 | 4 |
+| **app-agents** | SEC-APP, SEC-API | 512Mi / 250m | 2 | 6 |
+| **crypto-agents** | SEC-CRYPTO, SEC-KEY | 256Mi / 100m | 2 | 3 |
+| **compliance-agents** | SEC-AUDIT, SEC-RISK | 512Mi / 250m | 2 | 4 |
+
+**Total Baseline Resources:** ~4Gi memory, 2 vCPU
+
+#### Communication Patterns
+
+**Synchronous (gRPC):**
+- Orchestrator → Agent: Task delegation
+- Agent → Agent: Direct queries (SEC-AUTH → SEC-IMA for user lookup)
+- Agent → Orchestrator: Result return
+
+**Asynchronous (NATS/Redis Streams):**
+- Broadcast notifications (new requirement added)
+- Long-running analysis tasks
+- Event-driven updates (compliance status changed)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                        Communication Flow                                     │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│    User Request                                                               │
+│         │                                                                     │
+│         ▼                                                                     │
+│  ┌─────────────┐     gRPC (sync)     ┌─────────────────────────────────────┐ │
+│  │ Orchestrator│─────────────────────▶│          Agent Pods                 │ │
+│  │             │◀─────────────────────│  (process, return findings)         │ │
+│  └─────────────┘                      └─────────────────────────────────────┘ │
+│         │                                                                     │
+│         │  NATS (async)                                                       │
+│         ▼                                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │                          Message Bus                                     │ │
+│  │   Topics:                                                                │ │
+│  │   • secomp.analysis.started                                              │ │
+│  │   • secomp.finding.new                                                   │ │
+│  │   • secomp.report.generated                                              │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Scaling Strategy
+
+```yaml
+# Scale based on A2A message queue depth
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: identity-agents-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: identity-agents
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    # CPU-based scaling
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Custom metric: pending A2A messages
+    - type: External
+      external:
+        metric:
+          name: secomp_a2a_pending_messages
+          selector:
+            matchLabels:
+              agent_group: identity
+        target:
+          type: AverageValue
+          averageValue: "50"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 120
+```
+
+#### Security Controls (SEC-K8S Compliance)
+
+| Control | Implementation |
+|---------|----------------|
+| **Pod Security Standards** | `restricted` profile enforced |
+| **Network Policies** | Default deny, explicit allow per agent group |
+| **Service Accounts** | Unique SA per pod, minimal RBAC |
+| **Secret Management** | BTP Service Binding, no env var secrets |
+| **mTLS** | Istio STRICT mode across namespaces |
+| **Workload Identity** | SPIFFE/SPIRE for agent identity |
+| **Resource Limits** | CPU/memory limits on all containers |
+| **Read-only Root** | `readOnlyRootFilesystem: true` |
+
+---
+
+### 4.5 Kubernetes Resources Needed
+
+Complete list of Kubernetes resources for SECOMP-V3 deployment:
+
+#### Namespaces
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secomp-orchestrator
+  labels:
+    istio-injection: enabled
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secomp-agents
+  labels:
+    istio-injection: enabled
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secomp-data
+  labels:
+    istio-injection: enabled
+```
+
+#### Deployments (7 total)
+
+| Deployment | Namespace | Purpose |
+|------------|-----------|---------|
+| `secomp-orchestrator` | secomp-orchestrator | Chief Architect Agent |
+| `secomp-identity-agents` | secomp-agents | SEC-AUTH, SEC-IMA |
+| `secomp-data-agents` | secomp-agents | SEC-DATA, SEC-PRI, SEC-LOG |
+| `secomp-infra-agents` | secomp-agents | SEC-K8S, SEC-COM, SEC-NET |
+| `secomp-app-agents` | secomp-agents | SEC-APP, SEC-API |
+| `secomp-crypto-agents` | secomp-agents | SEC-CRYPTO, SEC-KEY |
+| `secomp-compliance-agents` | secomp-agents | SEC-AUDIT, SEC-RISK |
+
+#### Services
+
+```yaml
+# ClusterIP for internal communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  namespace: secomp-orchestrator
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+    - name: http
+      port: 8080
+      targetPort: 8080
+  selector:
+    app: secomp-orchestrator
+---
+# Headless service for agent discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity-agents
+  namespace: secomp-agents
+spec:
+  clusterIP: None  # Headless
+  ports:
+    - name: grpc
+      port: 50051
+  selector:
+    agent-group: identity
+```
+
+#### APIRule (External Access)
+
+```yaml
+apiVersion: gateway.kyma-project.io/v1beta1
+kind: APIRule
+metadata:
+  name: secomp-api
+  namespace: secomp-orchestrator
+spec:
+  host: secomp.kyma.example.com
+  service:
+    name: orchestrator
+    port: 8080
+  gateway: kyma-system/kyma-gateway
+  rules:
+    - path: /api/v1/.*
+      methods: ["GET", "POST", "PUT", "DELETE"]
+      accessStrategies:
+        - handler: jwt
+          config:
+            trusted_issuers:
+              - https://secomp-v3.authentication.eu11.hana.ondemand.com/oauth/token
+    - path: /health
+      methods: ["GET"]
+      accessStrategies:
+        - handler: noop  # Public health endpoint
+```
+
+#### ConfigMaps
+
+```yaml
+# Agent configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: secomp-agents
+data:
+  agents.yaml: |
+    identity:
+      agents:
+        - name: SEC-AUTH
+          model: gpt-4-turbo
+          maxTokens: 4096
+          temperature: 0
+        - name: SEC-IMA
+          model: gpt-4-turbo
+          maxTokens: 4096
+          temperature: 0
+    # ... other groups
+---
+# System prompts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-prompts
+  namespace: secomp-agents
+data:
+  sec-auth-prompt.txt: |
+    You are SEC-AUTH, a domain expert in authentication security...
+  sec-ima-prompt.txt: |
+    You are SEC-IMA, a domain expert in identity management...
+```
+
+#### Secrets (via ServiceBinding)
+
+```yaml
+# XSUAA binding
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceBinding
+metadata:
+  name: xsuaa-binding
+  namespace: secomp-orchestrator
+spec:
+  serviceInstanceName: secomp-v3-xsuaa
+  secretName: xsuaa-credentials
+---
+# HANA binding
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceBinding
+metadata:
+  name: hana-binding
+  namespace: secomp-data
+spec:
+  serviceInstanceName: secomp-hana
+  secretName: hana-credentials
+---
+# AI Core binding
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceBinding
+metadata:
+  name: aicore-binding
+  namespace: secomp-orchestrator
+spec:
+  serviceInstanceName: secomp-aicore
+  secretName: aicore-credentials
+```
+
+#### NetworkPolicies
+
+```yaml
+# Default deny all in agents namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: secomp-agents
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow orchestrator to call agents
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-orchestrator
+  namespace: secomp-agents
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: secomp-orchestrator
+      ports:
+        - protocol: TCP
+          port: 50051
+---
+# Allow agents to call each other
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-inter-agent
+  namespace: secomp-agents
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 50051
+  egress:
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 50051
+---
+# Allow agents to access HANA
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-hana-egress
+  namespace: secomp-agents
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: secomp-data
+      ports:
+        - protocol: TCP
+          port: 443
+```
+
+#### HorizontalPodAutoscalers
+
+```yaml
+# Orchestrator HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: orchestrator-hpa
+  namespace: secomp-orchestrator
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: secomp-orchestrator
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# Identity agents HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: identity-agents-hpa
+  namespace: secomp-agents
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: secomp-identity-agents
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+#### PeerAuthentication (mTLS)
+
+```yaml
+# Strict mTLS in orchestrator namespace
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: strict-mtls
+  namespace: secomp-orchestrator
+spec:
+  mtls:
+    mode: STRICT
+---
+# Strict mTLS in agents namespace
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: strict-mtls
+  namespace: secomp-agents
+spec:
+  mtls:
+    mode: STRICT
+```
+
+#### AuthorizationPolicy (Agent-to-Agent Auth)
+
+```yaml
+# Only orchestrator can call agents
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: orchestrator-to-agents
+  namespace: secomp-agents
+spec:
+  selector:
+    matchLabels:
+      app: secomp-agent
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/secomp-orchestrator/sa/orchestrator-sa
+              - cluster.local/ns/secomp-agents/sa/agent-sa
+      to:
+        - operation:
+            ports: ["50051"]
+```
+
+#### Resource Summary
+
+| Resource Type | Count | Purpose |
+|---------------|-------|---------|
+| Namespace | 3 | Isolation |
+| Deployment | 7 | Workloads |
+| Service | 7 | Internal communication |
+| APIRule | 1 | External access |
+| ConfigMap | 2 | Configuration |
+| ServiceBinding | 3 | BTP service credentials |
+| NetworkPolicy | 4 | Traffic control |
+| HPA | 7 | Autoscaling |
+| PeerAuthentication | 2 | mTLS |
+| AuthorizationPolicy | 1 | RBAC |
+
+---
+
+### 4.6 SPIFFE/SPIRE for Agent Identity
+
+#### Why SPIFFE/SPIRE is Critical for Multi-Agent Systems
+
+In a multi-agent architecture, trust between agents is paramount. Traditional approaches have significant limitations:
+
+| Approach | Problem |
+|----------|---------|
+| Static API Keys | Leaked key compromises all communication |
+| Shared Secrets | Rotation requires coordinated deployment |
+| Service Account Tokens | Long-lived, no automatic rotation |
+
+SPIFFE (Secure Production Identity Framework For Everyone) solves these problems:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                    SPIFFE/SPIRE Architecture                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │                         SPIRE Server                                     │ │
+│  │  • Certificate Authority                                                 │ │
+│  │  • Identity Registry                                                     │ │
+│  │  • Trust Bundle Management                                               │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                                      │                                        │
+│                    ┌─────────────────┼─────────────────┐                     │
+│                    ▼                 ▼                 ▼                     │
+│  ┌──────────────────────┐ ┌──────────────────────┐ ┌──────────────────────┐  │
+│  │     SPIRE Agent      │ │     SPIRE Agent      │ │     SPIRE Agent      │  │
+│  │    (Node 1)          │ │    (Node 2)          │ │    (Node 3)          │  │
+│  └──────────────────────┘ └──────────────────────┘ └──────────────────────┘  │
+│           │                        │                        │                │
+│           ▼                        ▼                        ▼                │
+│  ┌──────────────────────┐ ┌──────────────────────┐ ┌──────────────────────┐  │
+│  │   Orchestrator Pod   │ │  Identity Agents Pod │ │   Data Agents Pod    │  │
+│  │                      │ │                      │ │                      │  │
+│  │  SPIFFE ID:          │ │  SPIFFE ID:          │ │  SPIFFE ID:          │  │
+│  │  spiffe://secomp/    │ │  spiffe://secomp/    │ │  spiffe://secomp/    │  │
+│  │  orchestrator        │ │  agent/identity      │ │  agent/data          │  │
+│  │                      │ │                      │ │                      │  │
+│  │  X.509 SVID:         │ │  X.509 SVID:         │ │  X.509 SVID:         │  │
+│  │  • 1 hour TTL        │ │  • 1 hour TTL        │ │  • 1 hour TTL        │  │
+│  │  • Auto-renewed      │ │  • Auto-renewed      │ │  • Auto-renewed      │  │
+│  └──────────────────────┘ └──────────────────────┘ └──────────────────────┘  │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### SPIFFE ID Structure for SECOMP Agents
+
+```
+spiffe://secomp.example.com/ns/secomp-orchestrator/sa/orchestrator-sa
+        └─────────┬────────┘ └─┬─┘ └───────┬──────┘ └─┬┘ └─────┬─────┘
+             Trust Domain   Path   Namespace  Service  Service
+                          Component            Account  Account
+                                               Prefix   Name
+```
+
+**Example SPIFFE IDs:**
+
+| Agent | SPIFFE ID |
+|-------|-----------|
+| Orchestrator | `spiffe://secomp.example.com/ns/secomp-orchestrator/sa/orchestrator-sa` |
+| SEC-AUTH | `spiffe://secomp.example.com/ns/secomp-agents/sa/identity-agent-sa` |
+| SEC-K8S | `spiffe://secomp.example.com/ns/secomp-agents/sa/infra-agent-sa` |
+
+#### Short-Lived Credentials (1 Hour TTL)
+
+```yaml
+# SPIRE Server configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-server-config
+  namespace: spire-system
+data:
+  server.conf: |
+    server {
+        bind_address = "0.0.0.0"
+        bind_port = "8081"
+        trust_domain = "secomp.example.com"
+        
+        # X.509 SVID configuration
+        default_x509_svid_ttl = "1h"    # 1 hour TTL
+        ca_ttl = "168h"                  # 7 day CA certificate
+        
+        # Automatic rotation
+        # SVIDs renewed at 50% of TTL (30 minutes)
+    }
+```
+
+**Benefits of Short TTL:**
+
+| Benefit | Description |
+|---------|-------------|
+| Limited Blast Radius | Compromised credential expires in 1 hour |
+| No Manual Rotation | SPIRE handles all rotation automatically |
+| Audit Trail | Each SVID issuance is logged |
+| Zero Standing Privileges | No long-lived credentials to steal |
+
+#### mTLS Between Agents via Istio
+
+Istio integrates with SPIRE for automatic mTLS:
+
+```yaml
+# Istio configuration to use SPIRE for identity
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  meshConfig:
+    trustDomain: secomp.example.com
+  values:
+    pilot:
+      env:
+        PILOT_CERT_PROVIDER: spiffe
+    global:
+      caAddress: spire-server.spire-system.svc:8081
+```
+
+**How mTLS Works:**
+
+```
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                    Agent-to-Agent mTLS Flow                                    │
+├───────────────────────────────────────────────────────────────────────────────┤
+│                                                                                │
+│  1. Orchestrator wants to call SEC-AUTH                                        │
+│                                                                                │
+│     ┌─────────────────┐          ┌─────────────────┐                          │
+│     │  Orchestrator   │          │    SEC-AUTH     │                          │
+│     │                 │          │                 │                          │
+│     │  ┌───────────┐  │          │  ┌───────────┐  │                          │
+│     │  │ Envoy     │──┼── TLS ───┼─▶│ Envoy     │  │                          │
+│     │  │ Sidecar   │  │ Handshake│  │ Sidecar   │  │                          │
+│     │  └───────────┘  │          │  └───────────┘  │                          │
+│     └─────────────────┘          └─────────────────┘                          │
+│                                                                                │
+│  2. TLS Handshake                                                              │
+│     • Orchestrator presents X.509 SVID                                         │
+│     • SEC-AUTH validates against Trust Bundle                                  │
+│     • SEC-AUTH presents its X.509 SVID                                         │
+│     • Orchestrator validates                                                   │
+│     • Session established with forward secrecy                                 │
+│                                                                                │
+│  3. Authorization Check (Istio AuthorizationPolicy)                            │
+│     • SEC-AUTH checks: Is caller SPIFFE ID authorized?                         │
+│     • If yes: Process request                                                  │
+│     • If no: Reject with 403                                                   │
+│                                                                                │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### No Static Secrets Needed
+
+With SPIFFE/SPIRE, the traditional secret management challenges disappear:
+
+| Traditional Approach | SPIFFE/SPIRE Approach |
+|---------------------|----------------------|
+| Store API keys in K8s Secrets | No secrets needed |
+| Rotate keys manually or via cronjob | Automatic rotation every 30 minutes |
+| Risk of secret leakage in logs | No secrets to leak |
+| Complex key distribution | Automatic via SPIRE Agent |
+| Emergency rotation is complex | Just revoke entry in SPIRE Server |
+
+#### Implementation for SECOMP Agents
+
+```typescript
+// agent-communication.ts
+import { createSecureChannel } from '@grpc/grpc-js';
+import { SpiffeWorkloadApi } from '@spiffe/workload-api';
+
+class AgentCommunication {
+  private spiffeClient: SpiffeWorkloadApi;
+  
+  async initialize() {
+    // Connect to SPIRE Agent via Unix socket
+    this.spiffeClient = new SpiffeWorkloadApi({
+      socketPath: process.env.SPIFFE_ENDPOINT_SOCKET || '/run/spire/sockets/agent.sock'
+    });
+    
+    // Watch for X.509 SVID updates
+    this.spiffeClient.watchX509Context((context) => {
+      console.log('Received new X.509 SVID:', context.defaultSvid.spiffeId);
+      this.updateTlsCredentials(context);
+    });
+  }
+  
+  async callAgent(targetAgent: string, request: A2AMessage): Promise<A2AResponse> {
+    // Get current X.509 SVID (automatically rotated)
+    const x509Context = await this.spiffeClient.fetchX509Context();
+    
+    // Create mTLS channel with SVID
+    const channel = createSecureChannel(
+      `${targetAgent}.secomp-agents.svc.cluster.local:50051`,
+      this.createTlsCredentials(x509Context)
+    );
+    
+    // Make the call - mTLS is automatic
+    const client = new AgentServiceClient(channel);
+    return client.processRequest(request);
+  }
+  
+  private createTlsCredentials(context: X509Context): grpc.ChannelCredentials {
+    return grpc.credentials.createSsl(
+      context.trustBundle,           // CA certificates
+      context.defaultSvid.privateKey, // Client private key
+      context.defaultSvid.certificate // Client certificate
+    );
+  }
+}
+```
+
+---
+
+### 4.7 Sample Deployment Manifest Structure
+
+Below is the complete manifest structure for deploying SECOMP-V3 to Kyma:
+
+#### Directory Structure
+
+```
+kyma/
+├── base/
+│   ├── namespaces.yaml
+│   └── rbac.yaml
+├── orchestrator/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── api-rule.yaml
+│   ├── hpa.yaml
+│   └── configmap.yaml
+├── agents/
+│   ├── identity/
+│   │   ├── deployment.yaml
+│   │   ├── service.yaml
+│   │   └── hpa.yaml
+│   ├── data/
+│   │   ├── deployment.yaml
+│   │   ├── service.yaml
+│   │   └── hpa.yaml
+│   ├── infra/
+│   │   ├── deployment.yaml
+│   │   ├── service.yaml
+│   │   └── hpa.yaml
+│   ├── app/
+│   │   ├── deployment.yaml
+│   │   ├── service.yaml
+│   │   └── hpa.yaml
+│   ├── crypto/
+│   │   ├── deployment.yaml
+│   │   ├── service.yaml
+│   │   └── hpa.yaml
+│   └── compliance/
+│       ├── deployment.yaml
+│       ├── service.yaml
+│       └── hpa.yaml
+├── networking/
+│   ├── network-policies.yaml
+│   ├── peer-authentication.yaml
+│   └── authorization-policy.yaml
+├── services/
+│   ├── xsuaa-binding.yaml
+│   ├── hana-binding.yaml
+│   └── aicore-binding.yaml
+├── spiffe-spire/
+│   ├── spire-server/
+│   │   ├── deployment.yaml
+│   │   ├── configmap.yaml
+│   │   └── service.yaml
+│   ├── spire-agent/
+│   │   ├── daemonset.yaml
+│   │   └── configmap.yaml
+│   └── cluster-spiffe-ids.yaml
+└── kustomization.yaml
+```
+
+#### Complete Sample Manifests
+
+```yaml
+# kyma/base/namespaces.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secomp-orchestrator
+  labels:
+    name: secomp-orchestrator
+    istio-injection: enabled
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secomp-agents
+  labels:
+    name: secomp-agents
+    istio-injection: enabled
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secomp-data
+  labels:
+    name: secomp-data
+    istio-injection: enabled
+```
+
+```yaml
+# kyma/orchestrator/deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secomp-orchestrator
+  namespace: secomp-orchestrator
+  labels:
+    app: secomp
+    component: orchestrator
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: secomp
+      component: orchestrator
+  template:
+    metadata:
+      labels:
+        app: secomp
+        component: orchestrator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: orchestrator-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: orchestrator
+          image: ghcr.io/your-org/secomp-orchestrator:v3.0.0
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: AGENT_DISCOVERY_MODE
+              value: "kubernetes"
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: "/run/spire/sockets/agent.sock"
+          envFrom:
+            - secretRef:
+                name: xsuaa-credentials
+            - secretRef:
+                name: aicore-credentials
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: spire-socket
+              mountPath: /run/spire/sockets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: spire-socket
+          csi:
+            driver: "csi.spiffe.io"
+            readOnly: true
+        - name: tmp
+          emptyDir: {}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              component: orchestrator
+```
+
+```yaml
+# kyma/orchestrator/service.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  namespace: secomp-orchestrator
+  labels:
+    app: secomp
+    component: orchestrator
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      protocol: TCP
+  selector:
+    app: secomp
+    component: orchestrator
+```
+
+```yaml
+# kyma/orchestrator/api-rule.yaml
+---
+apiVersion: gateway.kyma-project.io/v1beta1
+kind: APIRule
+metadata:
+  name: secomp-api
+  namespace: secomp-orchestrator
+spec:
+  host: secomp-api.c-xxxxxx.kyma.ondemand.com
+  service:
+    name: orchestrator
+    port: 8080
+  gateway: kyma-system/kyma-gateway
+  rules:
+    # Public health endpoint
+    - path: /health/.*
+      methods: ["GET"]
+      accessStrategies:
+        - handler: noop
+    # Protected API endpoints
+    - path: /api/v1/.*
+      methods: ["GET", "POST", "PUT", "DELETE"]
+      accessStrategies:
+        - handler: jwt
+          config:
+            jwks_urls:
+              - https://secomp-v3.authentication.eu11.hana.ondemand.com/token_keys
+            trusted_issuers:
+              - https://secomp-v3.authentication.eu11.hana.ondemand.com/oauth/token
+            required_scope:
+              - secomp-v3!t12345.Compliance.Read
+```
+
+```yaml
+# kyma/agents/identity/deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secomp-identity-agents
+  namespace: secomp-agents
+  labels:
+    app: secomp
+    component: agent
+    agent-group: identity
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      agent-group: identity
+  template:
+    metadata:
+      labels:
+        app: secomp
+        component: agent
+        agent-group: identity
+    spec:
+      serviceAccountName: identity-agent-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        # SEC-AUTH Agent
+        - name: sec-auth
+          image: ghcr.io/your-org/secomp-agents:v3.0.0
+          args: ["--agent=SEC-AUTH", "--port=50051"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: grpc
+              containerPort: 50051
+          env:
+            - name: AGENT_NAME
+              value: "SEC-AUTH"
+            - name: ORCHESTRATOR_URL
+              value: "orchestrator.secomp-orchestrator.svc.cluster.local:50051"
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: "/run/spire/sockets/agent.sock"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+          volumeMounts:
+            - name: spire-socket
+              mountPath: /run/spire/sockets
+              readOnly: true
+            - name: agent-shared
+              mountPath: /shared
+            - name: tmp
+              mountPath: /tmp
+        # SEC-IMA Agent
+        - name: sec-ima
+          image: ghcr.io/your-org/secomp-agents:v3.0.0
+          args: ["--agent=SEC-IMA", "--port=50052"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: grpc
+              containerPort: 50052
+          env:
+            - name: AGENT_NAME
+              value: "SEC-IMA"
+            - name: ORCHESTRATOR_URL
+              value: "orchestrator.secomp-orchestrator.svc.cluster.local:50051"
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: "/run/spire/sockets/agent.sock"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+          volumeMounts:
+            - name: spire-socket
+              mountPath: /run/spire/sockets
+              readOnly: true
+            - name: agent-shared
+              mountPath: /shared
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: spire-socket
+          csi:
+            driver: "csi.spiffe.io"
+            readOnly: true
+        - name: agent-shared
+          emptyDir:
+            medium: Memory
+            sizeLimit: "128Mi"
+        - name: tmp
+          emptyDir: {}
+```
+
+```yaml
+# kyma/networking/network-policies.yaml
+---
+# Default deny all in agents namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: secomp-agents
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow orchestrator to call agents
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-orchestrator-ingress
+  namespace: secomp-agents
+spec:
+  podSelector:
+    matchLabels:
+      component: agent
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: secomp-orchestrator
+          podSelector:
+            matchLabels:
+              component: orchestrator
+      ports:
+        - protocol: TCP
+          port: 50051
+        - protocol: TCP
+          port: 50052
+---
+# Allow inter-agent communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-inter-agent
+  namespace: secomp-agents
+spec:
+  podSelector:
+    matchLabels:
+      component: agent
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              component: agent
+      ports:
+        - protocol: TCP
+          port: 50051
+        - protocol: TCP
+          port: 50052
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              component: agent
+      ports:
+        - protocol: TCP
+          port: 50051
+        - protocol: TCP
+          port: 50052
+---
+# Allow DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: secomp-agents
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+---
+# Allow egress to BTP services (HANA, AI Core)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-btp-egress
+  namespace: secomp-agents
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+```
+
+```yaml
+# kyma/networking/peer-authentication.yaml
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: strict-mtls-orchestrator
+  namespace: secomp-orchestrator
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: strict-mtls-agents
+  namespace: secomp-agents
+spec:
+  mtls:
+    mode: STRICT
+```
+
+```yaml
+# kyma/networking/authorization-policy.yaml
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: orchestrator-auth
+  namespace: secomp-orchestrator
+spec:
+  selector:
+    matchLabels:
+      component: orchestrator
+  action: ALLOW
+  rules:
+    # Allow Kyma API Gateway
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/kyma-system/sa/oathkeeper-proxy
+    # Allow agents to respond
+    - from:
+        - source:
+            namespaces:
+              - secomp-agents
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: agents-auth
+  namespace: secomp-agents
+spec:
+  selector:
+    matchLabels:
+      component: agent
+  action: ALLOW
+  rules:
+    # Allow orchestrator to call agents
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/secomp-orchestrator/sa/orchestrator-sa
+    # Allow inter-agent calls
+    - from:
+        - source:
+            namespaces:
+              - secomp-agents
+```
+
+```yaml
+# kyma/services/xsuaa-binding.yaml
+---
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceInstance
+metadata:
+  name: secomp-v3-xsuaa
+  namespace: secomp-orchestrator
+spec:
+  serviceOfferingName: xsuaa
+  servicePlanName: application
+  externalName: secomp-v3-xsuaa
+  parameters:
+    xsappname: secomp-v3
+    tenant-mode: dedicated
+    oauth2-configuration:
+      credential-types:
+        - x509
+    scopes:
+      - name: $XSAPPNAME.Compliance.Read
+        description: Read compliance data
+      - name: $XSAPPNAME.Compliance.Write
+        description: Write compliance data
+      - name: $XSAPPNAME.Admin
+        description: Admin access
+    role-templates:
+      - name: ComplianceViewer
+        scope-references:
+          - $XSAPPNAME.Compliance.Read
+      - name: ComplianceEditor
+        scope-references:
+          - $XSAPPNAME.Compliance.Read
+          - $XSAPPNAME.Compliance.Write
+      - name: Administrator
+        scope-references:
+          - $XSAPPNAME.Admin
+---
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceBinding
+metadata:
+  name: xsuaa-binding
+  namespace: secomp-orchestrator
+spec:
+  serviceInstanceName: secomp-v3-xsuaa
+  secretName: xsuaa-credentials
+  parameters:
+    credential-type: x509
+```
+
+```yaml
+# kyma/spiffe-spire/cluster-spiffe-ids.yaml
+---
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: secomp-orchestrator
+spec:
+  className: spire
+  spiffeIDTemplate: >-
+    spiffe://secomp.example.com/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}
+  podSelector:
+    matchLabels:
+      app: secomp
+      component: orchestrator
+  namespaceSelector:
+    matchLabels:
+      name: secomp-orchestrator
+---
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: secomp-agents
+spec:
+  className: spire
+  spiffeIDTemplate: >-
+    spiffe://secomp.example.com/ns/{{ .PodMeta.Namespace }}/agent/{{ .PodMeta.Labels.agent-group }}
+  podSelector:
+    matchLabels:
+      app: secomp
+      component: agent
+  namespaceSelector:
+    matchLabels:
+      name: secomp-agents
+```
+
+```yaml
+# kyma/kustomization.yaml
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: secomp-orchestrator
+
+resources:
+  # Base
+  - base/namespaces.yaml
+  - base/rbac.yaml
+  
+  # Orchestrator
+  - orchestrator/deployment.yaml
+  - orchestrator/service.yaml
+  - orchestrator/api-rule.yaml
+  - orchestrator/hpa.yaml
+  - orchestrator/configmap.yaml
+  
+  # Agents
+  - agents/identity/deployment.yaml
+  - agents/identity/service.yaml
+  - agents/identity/hpa.yaml
+  - agents/data/deployment.yaml
+  - agents/data/service.yaml
+  - agents/data/hpa.yaml
+  - agents/infra/deployment.yaml
+  - agents/infra/service.yaml
+  - agents/infra/hpa.yaml
+  - agents/app/deployment.yaml
+  - agents/app/service.yaml
+  - agents/app/hpa.yaml
+  - agents/crypto/deployment.yaml
+  - agents/crypto/service.yaml
+  - agents/crypto/hpa.yaml
+  - agents/compliance/deployment.yaml
+  - agents/compliance/service.yaml
+  - agents/compliance/hpa.yaml
+  
+  # Networking
+  - networking/network-policies.yaml
+  - networking/peer-authentication.yaml
+  - networking/authorization-policy.yaml
+  
+  # BTP Services
+  - services/xsuaa-binding.yaml
+  - services/hana-binding.yaml
+  - services/aicore-binding.yaml
+  
+  # SPIFFE/SPIRE
+  - spiffe-spire/cluster-spiffe-ids.yaml
+
+commonLabels:
+  app.kubernetes.io/name: secomp
+  app.kubernetes.io/version: "3.0.0"
+  app.kubernetes.io/managed-by: kustomize
+
+images:
+  - name: ghcr.io/your-org/secomp-orchestrator
+    newTag: v3.0.0
+  - name: ghcr.io/your-org/secomp-agents
+    newTag: v3.0.0
+```
+
+---
+
+## Summary
+
+This document provides a comprehensive record of the development activities on 19 February 2026, including:
+
+1. **Completed Tasks:** Business Risk Dashboard, HANA JWT setup, CF deployment, security audit, and SEC-K8S agent enhancement with SPIFFE/SPIRE
+
+2. **Known Issues:** Four bugs identified with severity and suggested fixes
+
+3. **Recommendations:** Six prioritized enhancements for security and stability
+
+4. **Kyma Deployment Strategy:** Detailed analysis of deployment options with a recommended hybrid architecture
+
+The recommended **Hybrid Deployment** strategy provides the optimal balance of:
+- Operational simplicity (7 deployments vs 15)
+- Scalability (independent scaling per agent group)
+- Fault isolation (grouped by domain)
+- Security (SPIFFE/SPIRE, mTLS, NetworkPolicies)
+- BTP integration (ServiceBindings for managed services)
+
+---
+
+*Document generated: 19 February 2026*  
+*Project: SECOMP-V3 - SAP Security Compliance Checker*  
+*Version: 3.0.0*
